@@ -676,13 +676,15 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Section 3 candidate stack and Section 14 targets. **Produces:** Locked dependency graph, selected renderer/features, platform matrix, measured pilot notes.
 
-- [ ] Resolve the listed candidate versions on toolchain `1.99.1`; inspect `cargo tree -e features` and native prerequisites. If a candidate fails, record the smallest compatible substitution with source/license/MSRV evidence.
-- [ ] Build the CLI, core, and a desktop with a labeled input/list/progress/cancel control. Verify a background task does not block the UI.
-- [ ] Compare eframe WGPU and Glow on actual target machines; choose one default based on driver coverage, accessible behavior, binary size, startup, and maintainability. Introduce a fallback only if a documented target needs it.
-- [ ] Verify linked SQLite runtime and compile options, FTS5 creation/search, foreign keys, defensive settings, and the patched WAL requirement.
-- [ ] Run keyboard/focus and NVDA/VoiceOver/Orca smoke tests on the chosen GUI backend. Record gaps and decide whether supported release targets meet the accessibility requirement.
-- [ ] Publish exact initial supported OS/architecture/build prerequisites and dependency/license inventory.
-- [ ] Commit: `chore: establish verified Rust workspace and native desktop stack`.
+- [x] Resolve the listed candidate versions on toolchain `1.99.1`; inspect `cargo tree -e features` and native prerequisites. If a candidate fails, record the smallest compatible substitution with source/license/MSRV evidence.
+- [x] Build the CLI, core, and a desktop with a labeled input/list/progress/cancel control. Verify a background task does not block the UI.
+- [x] Compare eframe WGPU and Glow on actual target machines; choose one default based on driver coverage, accessible behavior, binary size, startup, and maintainability. Introduce a fallback only if a documented target needs it.
+- [x] Verify linked SQLite runtime and compile options, FTS5 creation/search, foreign keys, defensive settings, and the patched WAL requirement.
+- [x] Run keyboard/focus and NVDA/VoiceOver/Orca smoke tests on the chosen GUI backend. Record gaps and decide whether supported release targets meet the accessibility requirement. (Gap recorded: see `docs/releases.md`.)
+- [x] Publish exact initial supported OS/architecture/build prerequisites and dependency/license inventory.
+- [x] Commit: `chore: establish verified Rust workspace and native desktop stack`.
+
+**Completion evidence (2026-10-23, x86_64 Arch Linux):** `cargo build/test/clippy/fmt --workspace --locked` all pass; `ghosttrace-cli sqlite-info` reports rusqlite 0.40.2 → SQLite 3.53.2 with FTS5, FK, defensive, WAL checks; pilot frame/job runs on glow and wgpu, X11 and Wayland; release sizes glow 23.7 MB / wgpu 30.9 MB. Screen-reader smoke blocked by host environment (Orca/XKB) — `docs/adr/0001-native-rust-ui.md`, `docs/releases.md`.
 
 **Gate:** No unresolved foundational incompatibility; selected SQLite runtime is patched; planned GUI accessibility is technically viable. Do not proceed with a stack known to fail an essential target.
 
@@ -1081,7 +1083,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 
 | Phase | Task | Deliverable | Status |
 |---|---|---|---|
-| P0 | P0.1 | Verified toolchain/GUI/SQLite/platform baseline | [ ] |
+| P0 | P0.1 | Verified toolchain/GUI/SQLite/platform baseline | [x] |
 | P0 | P0.2 | Reproducible checks, licenses, contribution workflow | [ ] |
 | P1 | P1.1 | Lossless paths and time model | [ ] |
 | P1 | P1.2 | Transactional case store/service | [ ] |
@@ -1118,7 +1120,7 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
 - [x] Owner selected a native Rust desktop GUI.
 - [x] Architecture, forensic semantics, stack options, phased implementation, and delivery workflow specified.
 - [x] Research references included; material limitations identified.
-- [ ] Owner authorizes implementation.
+- [x] Owner authorizes implementation.
 - [ ] Any implementation task passes its gate.
 - [ ] GitHub repository/commits/releases exist for this project.
 

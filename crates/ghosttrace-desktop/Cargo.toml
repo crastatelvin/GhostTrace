@@ -1,0 +1,26 @@
+[package]
+name = "ghosttrace-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# Renderer backends are selectable so the P0.1 comparison (plan Section 3) and
+# later phases can ship exactly one default plus an explicitly tested fallback.
+# Default: glow — smallest binary and widest driver coverage on the verified
+# Linux target (see docs/adr/0001-native-rust-ui.md).
+default = ["glow"]
+glow = ["eframe/glow"]
+wgpu = ["eframe/wgpu"]
+screenshot = ["eframe/__screenshot"]
+
+[dependencies]
+ghosttrace-core = { path = "../ghosttrace-core" }
+# eframe default features are off so the `glow`/`wgpu` crate features select
+# exactly one backend; the shared set below matches eframe's non-renderer
+# defaults (accesskit, fonts, platform windows).
+eframe = { workspace = true, default-features = false, features = ["accesskit", "clipboard", "default_fonts", "links", "system_fonts", "wayland", "x11"] }
+egui.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
