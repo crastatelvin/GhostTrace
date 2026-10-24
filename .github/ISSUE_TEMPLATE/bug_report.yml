@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible defect in GhostTrace
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never upload real evidence.** Reports must use synthetic or public
+        redacted examples. GhostTrace will never ask you to attach captured
+        artifacts (plan Section 21).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened vs. what you expected
+      description: Observed behavior and expected behavior.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: GhostTrace version / build
+      description: Output of `ghosttrace --version` or the release tag.
+    validations:
+      required: true
+  - type: dropdown
+    id: frontend
+    attributes:
+      label: Front end
+      options: [CLI, TUI, Desktop]
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS / architecture / Rust toolchain
+      description: e.g. Linux x86_64, Rust 1.99.1; desktop renderer if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal synthetic reproduction
+      description: Commands, fixture or generator inputs, and expected result.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Safe diagnostics
+      description: Error codes and diagnostics output only — no raw paths, URLs, messages, or notes.

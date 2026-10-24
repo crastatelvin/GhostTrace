@@ -694,11 +694,13 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P0.1 workspace. **Produces:** Reproducible local check entry point, tracked small-fixture catalog, CI baseline.
 
-- [ ] Add license/attribution rules, safe ignores, text newline policy, case/secret exclusions, and the planning document to repository docs.
-- [ ] Add `xtask check` and deterministic fixture catalog validation. An unknown license, missing expected digest, or private-key file in the tracked fixture set must fail.
-- [ ] Configure public PR CI: format, lint, tests, feature builds, and no privileged secrets for untrusted PRs.
-- [ ] Write quickstart, issue templates, contribution/review expectations, vulnerability reporting instructions, and support scope.
-- [ ] Commit: `chore: add reproducible checks and open-source contributor workflow`.
+- [x] Add license/attribution rules, safe ignores, text newline policy, case/secret exclusions, and the planning document to repository docs.
+- [x] Add `xtask check` and deterministic fixture catalog validation. An unknown license, missing expected digest, or private-key file in the tracked fixture set must fail.
+- [x] Configure public PR CI: format, lint, tests, feature builds, and no privileged secrets for untrusted PRs.
+- [x] Write quickstart, issue templates, contribution/review expectations, vulnerability reporting instructions, and support scope.
+- [x] Commit: `chore: add reproducible checks and open-source contributor workflow`.
+
+**Completion evidence (2026-10-24):** `xtask/src/fixtures.rs` unit tests prove catalog verification rejects digest mismatch, unknown license, and path escape; `xtask check` (fmt, clippy, `--locked` workspace tests, wgpu feature build, fixtures, tracked-path policy) exits 0 on this host. CI pins actions by verified full commit SHA, permissions are read-only, no secrets are used. Community/licensing files: README, CHANGELOG, CONTRIBUTING, SECURITY, SUPPORT, CODE_OF_CONDUCT, THIRD_PARTY_NOTICES, LICENSE-APACHE/MIT; docs/quickstart.md, docs/testing.md; issue + PR templates, CODEOWNERS, deny.toml, .gitignore, .gitattributes.
 
 **Gate:** A fresh checkout can run documented checks; fixture catalog verification fails on a deliberately corrupted fixture entry.
 
@@ -1084,7 +1086,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | Phase | Task | Deliverable | Status |
 |---|---|---|---|
 | P0 | P0.1 | Verified toolchain/GUI/SQLite/platform baseline | [x] |
-| P0 | P0.2 | Reproducible checks, licenses, contribution workflow | [ ] |
+| P0 | P0.2 | Reproducible checks, licenses, contribution workflow | [x] |
 | P1 | P1.1 | Lossless paths and time model | [ ] |
 | P1 | P1.2 | Transactional case store/service | [ ] |
 | P2 | P2.1 | Safe traversal and coverage | [ ] |

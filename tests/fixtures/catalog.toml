@@ -1,0 +1,10 @@
+# Authoritative inventory of the small, legally redistributable fixtures
+# tracked in Git (plan Sections 15, 16, P0.2). Large corpora are deliberately
+# NOT tracked: they are fetched by an explicit maintainer validation job.
+#
+# `xtask fixtures --verify` (run by `xtask check` and CI) validates every
+# entry: file exists, sha256 matches, license is allowed, path stays inside
+# this directory, and no tracked fixture file contains private-key material.
+#
+# Entries are added by the tasks that need them (P1+), never speculatively.
+# The empty catalog is valid; a corrupted entry is not.

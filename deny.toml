@@ -1,0 +1,46 @@
+# cargo-deny policy (plan P0.2, Section 20). Run via `cargo deny check` in
+# security jobs; the ordinary contributor toolchain stays plain Cargo.
+
+[graph]
+all-features = false
+
+[output]
+feature-depth = 1
+
+[licenses]
+# Permissive licenses only. Copyleft is allowed only when the dependency is
+# dual-licensed and we elect the permissive branch (cargo-deny handles OR
+# expressions by any-allowed match).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "0BSD",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[advisories]
+# RustSec advisories: ignore nothing silently; exceptions must name the
+# advisory, applicability, rationale, owner, and expiry (plan Section 20).
+yanked = "deny"
+unmaintained = "warn"
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Floating Git dependencies are forbidden for releases (plan Global constraints).
+allow-git = []

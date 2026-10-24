@@ -1,0 +1,29 @@
+# Newline policy: LF for text in Git (plan P0.2 "text newline policy")
+* text=auto eol=lf
+
+# Explicit text types
+*.rs text
+*.toml text
+*.md text
+*.sql text
+*.yml text
+*.yaml text
+*.html text
+*.css text
+*.json text
+*.jsonl text
+
+# Binary assets: never normalized
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+
+# Fixture byte strings are evidence-shaped: keep exact bytes
+tests/fixtures/** -text
