@@ -26,6 +26,8 @@ tracing = "0.1.44"
 eframe = "0.37.0"
 egui = "0.37.0"
 toml = "0.9.6"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10.4"
 
 [profile.release]
 # Evidence work is I/O bound; keep defaults for now, measure in P10.

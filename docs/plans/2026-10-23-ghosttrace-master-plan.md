@@ -712,12 +712,14 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Global constraints. **Produces:** `NativePath`, `EventTime`, `EvidenceObject`, `RawObservation`, case/acquisition identifiers and status types from Sections 5–6.
 
-- [ ] Test Chromium/FILETIME/Firefox numeric epoch conversions with preserved raw values.
-- [ ] Test ambiguous DST, nonexistent local time, missing year/zone, negative dates, conversion overflow, and precision versus accuracy fields.
-- [ ] Test distinct invalid Unix byte names and Windows native-unit serialization round-trip; display escaping must not become identity.
-- [ ] Implement these types/conversions and validation; use explicit statuses, not sentinel dates or lossy path strings.
-- [ ] Document timestamp meanings and the unresolved-time query behavior.
-- [ ] Commit: `feat: define lossless evidence paths and timestamp semantics`.
+- [x] Test Chromium/FILETIME/Firefox numeric epoch conversions with preserved raw values.
+- [x] Test ambiguous DST, nonexistent local time, missing year/zone, negative dates, conversion overflow, and precision versus accuracy fields.
+- [x] Test distinct invalid Unix byte names and Windows native-unit serialization round-trip; display escaping must not become identity.
+- [x] Implement these types/conversions and validation; use explicit statuses, not sentinel dates or lossy path strings.
+- [x] Document timestamp meanings and the unresolved-time query behavior.
+- [x] Commit: `feat: define lossless evidence paths and timestamp semantics`.
+
+**Completion evidence (2026-10-24):** `cargo test -p ghosttrace-core --test time_semantics --test native_paths --locked` → 7 + 9 tests pass (exact Chromium `11644473600000000`, FILETIME `116444736000000000`, Firefox `1000000` conversions with raw preservation; NY DST overlap keeps both `05:30Z`/`06:30Z` candidates; nonexistent/gap and zone-less records stay `Unresolved`; overflow is `Invalid`; byte-exact Unix identity with display collision allowed; control chars escaped; JSON round-trip). Full `xtask check` battery passes. Domain types in `domain/{time,path,case,evidence,event}.rs`, `error.rs` with stable machine codes. Docs: `docs/timestamps.md`, `docs/evidence-model.md`.
 
 **Focused check:** `cargo test -p ghosttrace-core --test time_semantics --test native_paths --locked`; expected conversions exact, raw paths/times unchanged after persistence projection.
 
@@ -1087,7 +1089,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 |---|---|---|---|
 | P0 | P0.1 | Verified toolchain/GUI/SQLite/platform baseline | [x] |
 | P0 | P0.2 | Reproducible checks, licenses, contribution workflow | [x] |
-| P1 | P1.1 | Lossless paths and time model | [ ] |
+| P1 | P1.1 | Lossless paths and time model | [x] |
 | P1 | P1.2 | Transactional case store/service | [ ] |
 | P2 | P2.1 | Safe traversal and coverage | [ ] |
 | P2 | P2.2 | Copy/hash/checkpoint/recovery | [ ] |
