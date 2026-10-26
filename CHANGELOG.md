@@ -23,3 +23,18 @@ file records implemented capability only.
 - P0.2 (2026-10-24): reproducible contributor checks (`xtask check`,
   `xtask fixtures --verify`), license/community/support files, CI with pinned
   actions, issue/PR templates, and quickstart/testing docs.
+- P1.1 (2026-10-24): lossless native paths and exact timestamp semantics —
+  `NativePath` (byte/code-unit identity, reversible interchange encoding,
+  escaped display), `EventTime` with Resolved/Ambiguous/Unresolved/Invalid
+  statuses and preserved raw values, Chromium/FILETIME/Firefox/epoch
+  conversions, DST overlap and nonexistent-time handling, domain records
+  (case, acquisition, evidence, observations, events), and error categories
+  with stable machine codes (`docs/timestamps.md`, `docs/evidence-model.md`).
+- P1.2 (2026-10-25): transactional case storage and the shared query service —
+  private case directories with exclusive creation, the dedicated writer with
+  bounded batches and all-or-nothing commits, checksummed sequential
+  migrations with backup-before-migrate and newer-schema rejection, WAL-aware
+  validated backups, read-only connections, keyset-ordered `EventQuery` /
+  `EventPage` with an explicit unresolved view, job checkpoints with
+  previously-running-job recovery detection, and startup SQLite diagnostics
+  (`docs/storage.md`).

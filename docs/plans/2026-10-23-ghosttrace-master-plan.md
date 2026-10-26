@@ -729,13 +729,15 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P1.1 records. **Produces:** `CaseSession`, case create/open, dedicated writer batches, job states, basic `EventQuery`/`EventPage` with stable cursor.
 
-- [ ] Test exclusive case creation, private directory permissions, foreign-key rejection, unique locator/idempotency enforcement, and newer-schema rejection.
-- [ ] Test an interrupted transaction does not expose half a batch; writer lock rejects a second writer while allowing supported read-only viewing.
-- [ ] Implement sequential checksummed migrations, dedicated writer connection, bounded queues, short read transactions, and stable keyset ordering. Before modifying an existing schema, take a SQLite online backup, sync/hash it, run integrity/schema checks, and abort the migration if backup validation fails; P9.2 extends this internal prerequisite into full portable object-aware backup/restore.
-- [ ] Test upgrade backup retains committed WAL data, backup failure prevents migration, and a failed migration leaves the original schema/data recoverable. A new empty case needs no pre-creation backup.
-- [ ] Test identical-time events paginate without skips/duplicates and unknown times stay in an explicit unresolved query view.
-- [ ] Add startup SQLite version/options diagnostics and recovery detection for previously running jobs.
-- [ ] Commit: `feat: add transactional case storage and shared query service`.
+- [x] Test exclusive case creation, private directory permissions, foreign-key rejection, unique locator/idempotency enforcement, and newer-schema rejection.
+- [x] Test an interrupted transaction does not expose half a batch; writer lock rejects a second writer while allowing supported read-only viewing.
+- [x] Implement sequential checksummed migrations, dedicated writer connection, bounded queues, short read transactions, and stable keyset ordering. Before modifying an existing schema, take a SQLite online backup, sync/hash it, run integrity/schema checks, and abort the migration if backup validation fails; P9.2 extends this internal prerequisite into full portable object-aware backup/restore.
+- [x] Test upgrade backup retains committed WAL data, backup failure prevents migration, and a failed migration leaves the original schema/data recoverable. A new empty case needs no pre-creation backup.
+- [x] Test identical-time events paginate without skips/duplicates and unknown times stay in an explicit unresolved query view.
+- [x] Add startup SQLite version/options diagnostics and recovery detection for previously running jobs.
+- [x] Commit: `feat: add transactional case storage and shared query service`.
+
+**Completion evidence (2026-10-26):** `cargo test -p ghosttrace-core --locked` → 71 tests pass: 51 library unit tests plus the four required integration files (case_storage 6, migrations 6, writer_concurrency 5, migration_backup 3). Reopen of a persisted case retrieves the same values/provenance; a batch with a foreign-key violation leaves neither its own rows nor any earlier op of the same batch; a second writer for one case is rejected while readers keep working; identical-time events paginate without skips or duplicates; unresolved events are reachable in the explicit view; interrupted `running` jobs are reported as recoverable (never auto-completed). Migration history mismatches and newer schemas are rejected; a failed backup aborts before schema changes; a failed migration leaves the original schema and a verified backup in place. `docs/storage.md` records layout, ownership, migration, query, and recovery rules.
 
 **Gate:** Reopen a persisted test case and retrieve the same raw values/provenance; injection at transaction boundaries never produces a completed partial run.
 
@@ -1090,7 +1092,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P0 | P0.1 | Verified toolchain/GUI/SQLite/platform baseline | [x] |
 | P0 | P0.2 | Reproducible checks, licenses, contribution workflow | [x] |
 | P1 | P1.1 | Lossless paths and time model | [x] |
-| P1 | P1.2 | Transactional case store/service | [ ] |
+| P1 | P1.2 | Transactional case store/service | [x] |
 | P2 | P2.1 | Safe traversal and coverage | [ ] |
 | P2 | P2.2 | Copy/hash/checkpoint/recovery | [ ] |
 | P2 | P2.3 | Scan/case CLI | [ ] |

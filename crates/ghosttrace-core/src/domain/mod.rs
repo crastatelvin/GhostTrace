@@ -8,6 +8,7 @@ pub mod case;
 pub mod event;
 pub mod evidence;
 pub mod path;
+pub mod query;
 pub mod time;
 
 pub use case::{Acquisition, AcquisitionId, AcquisitionMethod, AcquisitionState, Case, CaseId};
@@ -17,6 +18,7 @@ pub use evidence::{
     NativeIdentity, ObjectLocation,
 };
 pub use path::{NativePath, NativePathDecodeError};
+pub use query::{EventPage, EventQuery, EventRow, TimeCursor};
 pub use time::{
     ClockDomain, Epoch, EventTime, RawTimeValue, TimeAssumption, TimePrecision, TimeSemantic,
     TimeStatus, TimeUnit, UnixTime,
