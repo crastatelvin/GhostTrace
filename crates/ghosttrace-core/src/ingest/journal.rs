@@ -22,7 +22,7 @@ use crate::domain::time::{
 };
 use crate::error::{CoreError, CoreResult};
 
-use super::{EventDraft, ImportDiagnostic, ParsedRecord};
+use super::{EventDraft, ImportDiagnostic, ParsedRecord, hex_bytes, truncate_text};
 
 const MAX_FIELD_NAME: usize = 256;
 const KIND: &str = "journal.record";
@@ -117,6 +117,7 @@ impl<'a, R: BufRead> Reader<'a, R> {
                 self.drain_entry()?;
                 return Ok(ParsedRecord {
                     locator,
+                    locator_kind: "byte_range",
                     raw_json: None,
                     event: None,
                     diagnostics,
@@ -133,6 +134,7 @@ impl<'a, R: BufRead> Reader<'a, R> {
                 self.drain_entry()?;
                 return Ok(ParsedRecord {
                     locator,
+                    locator_kind: "byte_range",
                     raw_json: None,
                     event: None,
                     diagnostics,
@@ -145,6 +147,7 @@ impl<'a, R: BufRead> Reader<'a, R> {
                     self.drain_entry()?;
                     return Ok(ParsedRecord {
                         locator,
+                        locator_kind: "byte_range",
                         raw_json: None,
                         event: None,
                         diagnostics,
@@ -418,10 +421,11 @@ fn build_record(
 
     ParsedRecord {
         locator,
+        locator_kind: "byte_range",
         raw_json: Some(raw_json),
         event: Some(EventDraft {
             kind: KIND.to_string(),
-            summary: message.map_or_else(|| KIND.to_string(), |text| truncate(text, 512)),
+            summary: message.map_or_else(|| KIND.to_string(), |text| truncate_text(text, 512)),
             host: host.map(str::to_string),
             times,
         }),
@@ -434,7 +438,7 @@ fn raw_pairs(fields: &[(String, FieldValue)]) -> String {
     for (name, value) in fields {
         let value = match value {
             FieldValue::Text(text) => Value::String(text.clone()),
-            FieldValue::Binary(bytes) => json!({ "binary_hex": hex(bytes) }),
+            FieldValue::Binary(bytes) => json!({ "binary_hex": hex_bytes(bytes) }),
         };
         pairs.push(Value::Array(vec![Value::String(name.clone()), value]));
     }
@@ -602,27 +606,9 @@ fn diagnostic(code: &str, detail: &str) -> ImportDiagnostic {
 fn skipped(locator: String, diagnostic: ImportDiagnostic) -> ParsedRecord {
     ParsedRecord {
         locator,
+        locator_kind: "byte_range",
         raw_json: None,
         event: None,
         diagnostics: vec![diagnostic],
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        text.push_str(&format!("{byte:02x}"));
-    }
-    text
-}
-
-fn truncate(text: &str, limit: usize) -> String {
-    if text.len() <= limit {
-        return text.to_string();
-    }
-    let mut end = limit;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
 }

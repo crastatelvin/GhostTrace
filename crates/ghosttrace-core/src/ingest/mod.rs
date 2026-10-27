@@ -12,6 +12,7 @@
 //!   actually tested. Anything else stays a raw observation with no invented
 //!   type or time.
 
+pub mod browser;
 pub mod journal;
 pub mod jsonl;
 pub mod syslog;
@@ -52,14 +53,17 @@ pub enum LogFormat {
     Syslog5424,
     Syslog3164,
     JournalExport,
+    /// A captured SQLite browser package; Chromium/Firefox is decided by schema.
+    Browser,
 }
 
 impl LogFormat {
-    pub const ALL: [LogFormat; 4] = [
+    pub const ALL: [LogFormat; 5] = [
         LogFormat::Jsonl,
         LogFormat::Syslog5424,
         LogFormat::Syslog3164,
         LogFormat::JournalExport,
+        LogFormat::Browser,
     ];
 
     pub fn id(self) -> &'static str {
@@ -68,6 +72,7 @@ impl LogFormat {
             LogFormat::Syslog5424 => "syslog-5424",
             LogFormat::Syslog3164 => "syslog-3164",
             LogFormat::JournalExport => "journal-export",
+            LogFormat::Browser => "browser",
         }
     }
 
@@ -77,6 +82,8 @@ impl LogFormat {
             LogFormat::Syslog5424 => "syslog.rfc5424",
             LogFormat::Syslog3164 => "syslog.rfc3164",
             LogFormat::JournalExport => "journal.export",
+            // The concrete browser adapter is chosen from the validated schema.
+            LogFormat::Browser => "browser.package",
         }
     }
 
@@ -86,6 +93,7 @@ impl LogFormat {
             "syslog-5424" => Some(LogFormat::Syslog5424),
             "syslog-3164" => Some(LogFormat::Syslog3164),
             "journal-export" => Some(LogFormat::JournalExport),
+            "browser" => Some(LogFormat::Browser),
             _ => None,
         }
     }
@@ -95,6 +103,9 @@ impl LogFormat {
     pub fn detect(prefix: &[u8]) -> Option<Self> {
         let start = prefix.iter().position(|byte| !byte.is_ascii_whitespace())?;
         let rest = &prefix[start..];
+        if rest.starts_with(b"SQLite format 3\0") {
+            return Some(LogFormat::Browser);
+        }
         if rest.starts_with(b"__CURSOR=") || rest.starts_with(b"__REALTIME_TIMESTAMP=") {
             return Some(LogFormat::JournalExport);
         }
@@ -282,6 +293,89 @@ pub fn resolve_evidence(
     path: Option<&str>,
     evidence_id: Option<&str>,
 ) -> CoreResult<EvidenceRef> {
+    let rows = lookup_evidence(reader, acquisition_id, path, evidence_id)?;
+    if rows.is_empty() {
+        return Err(CoreError::InvalidInput(match (path, evidence_id) {
+            (_, Some(id)) => format!("no captured object with id {id}"),
+            (Some(path), None) => format!("no captured object at path {path}"),
+            (None, None) => "pass --path or --object".to_string(),
+        }));
+    }
+    if rows.len() > 1 {
+        return Err(CoreError::InvalidInput(
+            "multiple captured objects match; pass --object".to_string(),
+        ));
+    }
+    Ok(rows.into_iter().next().expect("one row"))
+}
+
+type EvidenceRow = (String, String, String, String, i64, Option<Vec<u8>>);
+
+fn evidence_ref(
+    (id, acquisition_id, native_path, store_subpath, byte_length, sha256): EvidenceRow,
+) -> CoreResult<EvidenceRef> {
+    let sha256: [u8; 32] = sha256
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(CoreError::CorruptEvidence)?;
+    Ok(EvidenceRef {
+        id,
+        acquisition_id,
+        native_path,
+        store_subpath,
+        byte_length: byte_length.max(0) as u64,
+        sha256,
+    })
+}
+
+/// Find a package sidecar by its already-encoded captured path.
+pub(crate) fn find_captured_encoded(
+    reader: &CaseReader,
+    acquisition_id: &str,
+    encoded_path: &str,
+) -> CoreResult<Option<EvidenceRef>> {
+    let connection = reader.connection();
+    let mut statement = connection
+        .prepare(
+            "SELECT id, acquisition_id, native_path_encoded, object_location,
+                    byte_length, sha256
+             FROM evidence_objects
+             WHERE acquisition_id = ?1
+               AND native_path_encoded = ?2
+               AND kind = 'file_content'
+               AND object_location IS NOT NULL
+               AND digest_status = 'complete'
+             LIMIT 2",
+        )
+        .map_err(|error| CoreError::Storage(format!("evidence lookup: {error}")))?;
+    let rows = statement
+        .query_map(rusqlite::params![acquisition_id, encoded_path], |row| {
+            let sha256: Option<Vec<u8>> = row.get(5)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                sha256,
+            ))
+        })
+        .map_err(|error| CoreError::Storage(format!("evidence lookup: {error}")))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| CoreError::Storage(format!("evidence lookup: {error}")))?;
+    if rows.len() > 1 {
+        return Err(CoreError::Storage(
+            "duplicate captured object at the same path".to_string(),
+        ));
+    }
+    rows.into_iter().next().map(evidence_ref).transpose()
+}
+
+fn lookup_evidence(
+    reader: &CaseReader,
+    acquisition_id: Option<&str>,
+    path: Option<&str>,
+    evidence_id: Option<&str>,
+) -> CoreResult<Vec<EvidenceRef>> {
     let connection = reader.connection();
     let acquisition = match acquisition_id {
         Some(id) => id.to_string(),
@@ -329,30 +423,7 @@ pub fn resolve_evidence(
         .map_err(|error| CoreError::Storage(format!("evidence lookup: {error}")))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| CoreError::Storage(format!("evidence lookup: {error}")))?;
-    if rows.is_empty() {
-        return Err(CoreError::InvalidInput(match (path, evidence_id) {
-            (_, Some(id)) => format!("no captured object with id {id}"),
-            (Some(path), None) => format!("no captured object at path {path}"),
-            (None, None) => "pass --path or --object".to_string(),
-        }));
-    }
-    if rows.len() > 1 {
-        return Err(CoreError::InvalidInput(
-            "multiple captured objects match; pass --object".to_string(),
-        ));
-    }
-    let (id, acquisition_id, native_path, store_subpath, byte_length, sha256) = rows[0].clone();
-    let sha256: [u8; 32] = sha256
-        .and_then(|bytes| bytes.try_into().ok())
-        .ok_or(CoreError::CorruptEvidence)?;
-    Ok(EvidenceRef {
-        id,
-        acquisition_id,
-        native_path,
-        store_subpath,
-        byte_length: byte_length.max(0) as u64,
-        sha256,
-    })
+    rows.into_iter().map(evidence_ref).collect()
 }
 
 /// Import one captured object. Returns the recorded run state; a cancellation
@@ -382,6 +453,9 @@ pub fn run_import(
             evidence.native_path
         ))
     })?;
+    if format == LogFormat::Browser {
+        return browser::run(reader, writer, case_root, request, &evidence, detected);
+    }
     if matches!(format, LogFormat::Syslog5424 | LogFormat::Syslog3164) {
         syslog::validate(&request.syslog)?;
     }
@@ -513,7 +587,9 @@ pub fn run_import(
                         LogFormat::Jsonl => jsonl::parse_line(text, &locator, &request.jsonl),
                         LogFormat::Syslog5424 => syslog.parse_line(text, &locator, true),
                         LogFormat::Syslog3164 => syslog.parse_line(text, &locator, false),
-                        LogFormat::JournalExport => unreachable!("handled above"),
+                        LogFormat::JournalExport | LogFormat::Browser => {
+                            unreachable!("handled above")
+                        }
                     };
                     committer.commit(parsed)?;
                 }
@@ -522,6 +598,49 @@ pub fn run_import(
         committer.flush()?;
     }
 
+    finalize_run(
+        writer,
+        RunSummary {
+            run,
+            counts,
+            diagnostics,
+            cancelled,
+            evidence: &evidence,
+            parser_id: format.parser_id(),
+            detected,
+            declared: request.format,
+        },
+    )
+}
+
+/// Everything a parse run accumulated once reading is over.
+pub(crate) struct RunSummary<'a> {
+    pub run: ParseRunRecord,
+    pub counts: Counts,
+    pub diagnostics: Diagnostics,
+    pub cancelled: bool,
+    pub evidence: &'a EvidenceRef,
+    pub parser_id: &'a str,
+    pub detected: Option<LogFormat>,
+    pub declared: Option<LogFormat>,
+}
+
+/// Record the terminal run state and return the outcome. Diagnostics are
+/// finalized exactly once, so a truncated list is visible in the result.
+pub(crate) fn finalize_run(
+    writer: &CaseWriter,
+    summary: RunSummary<'_>,
+) -> CoreResult<ImportOutcome> {
+    let RunSummary {
+        mut run,
+        counts,
+        diagnostics,
+        cancelled,
+        evidence,
+        parser_id,
+        detected,
+        declared,
+    } = summary;
     let (entries, total, truncated) = diagnostics.finish();
     run.state = if cancelled {
         "cancelled".to_string()
@@ -536,14 +655,14 @@ pub fn run_import(
     writer.queue_parse_run(&run)?;
 
     Ok(ImportOutcome {
-        run_id,
-        acquisition_id: evidence.acquisition_id,
-        evidence_id: evidence.id,
-        path: evidence.native_path,
-        parser_id: format.parser_id().to_string(),
-        parser_version: ADAPTER_VERSION.to_string(),
+        run_id: run.id,
+        acquisition_id: evidence.acquisition_id.clone(),
+        evidence_id: evidence.id.clone(),
+        path: evidence.native_path.clone(),
+        parser_id: parser_id.to_string(),
+        parser_version: run.parser_version,
         detected_format: detected.map(|format| format.id().to_string()),
-        declared_format: request.format.map(|format| format.id().to_string()),
+        declared_format: declared.map(|format| format.id().to_string()),
         state: run.state,
         records: counts.records,
         observations: counts.observations,
@@ -611,6 +730,7 @@ impl Diagnostics {
 /// repeated fields survive. Binary journal values are `{"binary_hex": "..."}`.
 pub(crate) struct ParsedRecord {
     pub locator: String,
+    pub locator_kind: &'static str,
     pub raw_json: Option<String>,
     pub event: Option<EventDraft>,
     pub diagnostics: Vec<ImportDiagnostic>,
@@ -627,6 +747,7 @@ impl ParsedRecord {
     pub(crate) fn with_diagnostic(locator: &str, code: &str, detail: impl Into<String>) -> Self {
         Self {
             locator: locator.to_string(),
+            locator_kind: "byte_range",
             raw_json: None,
             event: None,
             diagnostics: vec![ImportDiagnostic {
@@ -672,7 +793,7 @@ impl Committer<'_> {
                 parse_run_id: self.run_id.to_string(),
                 acquisition_id: self.evidence.acquisition_id.clone(),
                 evidence_id: self.evidence.id.clone(),
-                locator_kind: "byte_range",
+                locator_kind: parsed.locator_kind,
                 locator_identity: parsed.locator.clone(),
                 raw_fields_json: raw_json,
             });
@@ -878,6 +999,27 @@ fn encode_path_text(text: &str) -> String {
     {
         crate::domain::path::NativePath::windows(text.encode_utf16().collect::<Vec<_>>()).encoded()
     }
+}
+
+/// Truncate display text on a UTF-8 boundary; never splits a code point.
+pub(crate) fn truncate_text(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        return text.to_string();
+    }
+    let mut end = limit;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
+}
+
+/// Lowercase hex for binary values preserved in raw JSON.
+pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    text
 }
 
 fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {

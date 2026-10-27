@@ -855,11 +855,11 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Capture packages and P4.1 contract. **Produces:** Recognized browser visit events, raw logical row locators, schema/version/package diagnostics.
 
-- [ ] Test exact epochs, referrers/transitions, profile/source identities, synchronized/imported-history labels, and supported schema fingerprints. Add recognized Chromium download-table fixtures with preserved raw target/current path, start/end times, URL-chain fields, and explicit unavailable-field status; produce `browser.download` observations consumed by the supported download/execute rule.
-- [ ] Test main DB + committed WAL includes expected visits; missing/inconsistent sidecars cannot silently yield a complete package.
-- [ ] Test malicious schema objects, virtual tables/views, SQL limits, corrupt pages, and query deadline enforcement.
-- [ ] Implement fixed read-only queries on validated private copies; preserve originals and any derived backup relationship.
-- [ ] Document browser versions/schema fingerprints actually validated, plus rejected schema reporting.
+- [x] Test exact epochs, referrers/transitions, profile/source identities, synchronized/imported-history labels, and supported schema fingerprints. Add recognized Chromium download-table fixtures with preserved raw target/current path, start/end times, URL-chain fields, and explicit unavailable-field status; produce `browser.download` observations consumed by the supported download/execute rule.
+- [x] Test main DB + committed WAL includes expected visits; missing/inconsistent sidecars cannot silently yield a complete package.
+- [x] Test malicious schema objects, virtual tables/views, SQL limits, corrupt pages, and query deadline enforcement.
+- [x] Implement fixed read-only queries on validated private copies; preserve originals and any derived backup relationship.
+- [x] Document browser versions/schema fingerprints actually validated, plus rejected schema reporting.
 - [ ] Commit: `feat: import captured browser history with WAL consistency checks`.
 
 #### P4.4 — FTS5 and time-assumption review services
@@ -1112,7 +1112,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P3 | P3.2 | Verification and safe alpha reports | [x] |
 | P4 | P4.1 | JSONL/syslog adapter contract | [x] |
 | P4 | P4.2 | Binary-safe journal export | [x] |
-| P4 | P4.3 | Browser history/WAL/schema support | [ ] |
+| P4 | P4.3 | Browser history/WAL/schema support | [x] |
 | P4 | P4.4 | FTS and time revisions | [ ] |
 | P5 | P5.1 | Scoped entities/relationships | [ ] |
 | P5 | P5.2 | Explainable rules/notes/views | [ ] |

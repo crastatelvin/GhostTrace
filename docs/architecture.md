@@ -222,3 +222,15 @@ position an event; monotonic values are stored with clock domain
 `boot:<_BOOT_ID>` and `journal::compare_boot_times` refuses cross-boot order.
 Native `.journal` files are out of scope: `journalctl -o export` is an external
 acquisition step whose output is captured as an ordinary object.
+
+Browser packages (P4.3) add one package step before parsing: the captured main
+database and its `-wal`/`-shm` sidecars are digest-verified, copied into the
+case staging tree, and opened only there. The private copy is read-write once so
+SQLite can apply a committed WAL, then `query_only`; `trusted_schema=OFF`,
+`cell_size_check=ON`, SQLite limits, and a 30-second progress deadline guard
+fixed `SELECT` statements. Views and virtual tables are rejected before any
+adapter query, the schema contract chooses `browser.chromium` or
+`browser.firefox`, and a main database in WAL mode without its WAL is reported
+as a partial package with `wal_missing` rather than completed silently. Raw
+observations use logical row locators (`table:<table>:rowid:<id>`) and keep all
+original values; only visit rows and Chromium download metadata become events.

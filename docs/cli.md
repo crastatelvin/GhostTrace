@@ -246,14 +246,27 @@ ghosttrace import --case <DIR>.ghosttrace-case --path logs/app.jsonl \
 
 ghosttrace import --case <DIR>.ghosttrace-case --path var/log/syslog \
   --format syslog-3164 --timezone Europe/Berlin --year 2026
+
+ghosttrace import --case <DIR>.ghosttrace-case \
+  --path "Profile 1/History"
 ```
 
 `--path` is the captured relative path; `--object <ID>` selects the evidence
 object directly. Exactly one is required. `--acquisition` selects a capture
-(default: latest). `--format` accepts `jsonl`, `syslog-5424`, `syslog-3164`, or
-`journal-export` and overrides signature detection; both detected and declared
-formats are reported. Native `.journal` files are not parsed: capture a
-`journalctl -o export` stream first.
+(default: latest). `--format` accepts `jsonl`, `syslog-5424`, `syslog-3164`,
+`journal-export`, or `browser` and overrides signature detection; both detected
+and declared formats are reported. Native `.journal` files are not parsed:
+capture a `journalctl -o export` stream first.
+
+For browser history, `--path` names the captured main SQLite database; captured
+`<path>-wal` and `<path>-shm` sidecars in the same acquisition are found
+automatically. The schema chooses `browser.chromium` or `browser.firefox`.
+There are no per-table switches: the adapter validates the contract and
+rejects unsupported or inconsistent packages rather than guessing. A package
+in WAL mode without its WAL imports as `partial` with `wal_missing`; a `-shm`
+without `-wal` or any `-journal` sidecar is rejected with exit `2`. View,
+virtual-table, corrupt-page, and missing-column failures also exit `2` as
+`unsupported_format`/`corrupt_evidence` and record no run.
 
 Output: `{"run_id","acquisition_id","evidence_id","path","parser_id",
 "parser_version","detected_format","declared_format","state","records",
@@ -270,4 +283,6 @@ Time rules and the exact accepted/rejected records are in
 times stay unresolved without `--year`/`--timezone`; DST overlaps and
 December→January sequences stay `ambiguous`. Journal monotonic values stay
 boot-scoped and never choose a timeline position; only
-`__REALTIME_TIMESTAMP` does.
+`__REALTIME_TIMESTAMP` does. Browser times keep their Chromium-1601 or Firefox
+PRTime epoch and unit next to the normalized instant; download fields that the
+captured schema does not contain are reported, never invented.

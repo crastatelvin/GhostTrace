@@ -99,3 +99,12 @@ file records implemented capability only.
   monotonic timestamps are stored with clock domain `boot:<_BOOT_ID>` and are
   never ordered across boots (`compare_boot_times`). Native `.journal` files
   remain out of scope: capture `journalctl -o export` externally.
+- P4.3 (2026-10-27): captured Chromium and Firefox history packages — SQLite
+  contract validation with recorded schema fingerprints, digest-verified
+  private copies, committed-WAL application, and explicit `wal_missing`,
+  inconsistent-sidecar, and unavailable-download-field diagnostics. Chromium
+  visits/downloads and Firefox visits become `browser.visit`/`browser.download`
+  events with exact 1601/Unix-epoch times, referrers, transitions, sync/source
+  labels, and preserved download URL chains. Views, virtual tables, SQL limits,
+  a query deadline, corrupt pages, and missing contract columns are rejected
+  instead of parsed best-effort (`docs/formats.md`).

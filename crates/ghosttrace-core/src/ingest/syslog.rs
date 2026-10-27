@@ -77,6 +77,7 @@ impl Adapter {
 
         let mut record = ParsedRecord {
             locator: locator.to_string(),
+            locator_kind: "byte_range",
             raw_json: Some(serde_json::Value::Object(header.raw_fields()).to_string()),
             event: None,
             diagnostics: Vec::new(),

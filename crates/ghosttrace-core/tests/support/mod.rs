@@ -159,3 +159,52 @@ fn native(path: &Path) -> NativePath {
         NativePath::windows(path.as_os_str().encode_wide().collect::<Vec<u16>>())
     }
 }
+
+/// Build a SQLite database file with the given schema and row statements.
+pub fn sqlite_bytes(dir: &Path, name: &str, schema: &str, rows: &[&str]) -> Vec<u8> {
+    let path = dir.join(name);
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("db dirs");
+    let connection = rusqlite::Connection::open(&path).expect("open fixture db");
+    connection.execute_batch(schema).expect("fixture schema");
+    for row in rows {
+        connection.execute_batch(row).expect("fixture row");
+    }
+    let bytes = std::fs::read(&path).expect("read fixture db");
+    drop(connection);
+    bytes
+}
+
+pub struct WalFiles {
+    pub main: Vec<u8>,
+    pub wal: Vec<u8>,
+    pub shm: Option<Vec<u8>>,
+}
+
+/// Build a WAL-mode database and copy the three files while the writer is
+/// still open, so committed rows live in the WAL rather than the main file.
+pub fn wal_database(dir: &Path, schema: &str, rows: &[&str]) -> WalFiles {
+    let path = dir.join("History");
+    let connection = rusqlite::Connection::open(&path).expect("open WAL fixture");
+    let mode: String = connection
+        .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+        .expect("WAL mode");
+    assert_eq!(mode.to_ascii_lowercase(), "wal");
+    connection.execute_batch(schema).expect("fixture schema");
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .expect("checkpoint");
+    for row in rows {
+        connection.execute_batch(row).expect("fixture row");
+    }
+    let main = std::fs::read(&path).expect("main db");
+    let wal = std::fs::read(with_suffix(&path, "-wal")).expect("WAL");
+    let shm = std::fs::read(with_suffix(&path, "-shm")).ok();
+    drop(connection);
+    WalFiles { main, wal, shm }
+}
+
+pub fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
+}

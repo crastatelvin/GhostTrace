@@ -48,3 +48,12 @@ name = "journal"
 path = "journal/README.md"
 license = "Apache-2.0 OR MIT"
 sha256 = "58aab6bfc430113ff1a409ad5232918b747639cf1d78727d8dd834caa632a225"
+
+# P4.3 browser history contract definitions. The adapter tests build SQLite
+# files from these reviewed schemas at test time; only the reference shapes and
+# fingerprints are tracked.
+[[fixture]]
+name = "browser-history"
+path = "browser/README.md"
+license = "Apache-2.0 OR MIT"
+sha256 = "0e26b1b8a1595ed3157d8dd342142e75edbc651616a38700c9c05f95a559dca3"
