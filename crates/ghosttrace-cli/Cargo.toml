@@ -5,7 +5,16 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "ghosttrace"
+path = "src/main.rs"
+
 [dependencies]
 ghosttrace-core = { path = "../ghosttrace-core" }
 clap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+nix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

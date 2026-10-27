@@ -1472,7 +1472,10 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "ghosttrace-core",
+ "nix",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

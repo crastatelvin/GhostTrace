@@ -57,3 +57,10 @@ file records implemented capability only.
   tool version, roots, coverage counts, and per-object length/SHA-256 and
   verifies the stored copy. Capture metadata events (`file.observed`, application
   clock) and the `small-case` fixture definition complete the phase.
+- P2.3 (2026-10-27): CLI alpha workflow — `case create`, `scan`, `status`, and
+  `sqlite-info` with JSON on stdout, progress/warnings on stderr, documented
+  exit codes (`0`/`1`/`2`/`3`), `Ctrl-C` cancellation that stops after the
+  current chunk and keeps unstarted paths as explicit `unobserved` coverage,
+  terminal-safe encoded native paths, protected-copy vs live-best-effort
+  disclosure at the point of choice, and access-time effects stated
+  (`docs/cli.md`, README alpha workflow).

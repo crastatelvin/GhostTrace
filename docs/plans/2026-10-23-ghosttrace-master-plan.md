@@ -778,12 +778,16 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** `create_case`, `start_acquisition`, `watch_job`, `cancel_job`. **Produces:** Working `case create`, `scan`, status/help/version commands.
 
-- [ ] Test explicit case/source arguments, invalid layout, JSON-safe native paths, progress to stderr, Ctrl-C, and exit `3` for material omissions.
-- [ ] Implement commands and safe display without evidence control sequences.
-- [ ] Document best-effort live acquisition and protected-copy recommendations at the point users choose source method.
-- [ ] Commit: `feat: expose case creation and evidence scan in the CLI`.
+- [x] Test explicit case/source arguments, invalid layout, JSON-safe native paths, progress to stderr, Ctrl-C, and exit `3` for material omissions.
+- [x] Implement commands and safe display without evidence control sequences.
+- [x] Document best-effort live acquisition and protected-copy recommendations at the point users choose source method.
+- [x] Commit: `feat: expose case creation and evidence scan in the CLI`.
+
+**Completion evidence (2026-10-27):** `cargo test -p ghosttrace-cli --locked` → 10 tests pass. Usage: `--help` lists every command, `--version` works, a missing `--source` is a clap usage error (exit 2), a case path without `.ghosttrace-case` is rejected with `invalid_layout` (exit 2), a missing case is an operation failure with JSON on stderr (exit 1), and an existing case is never overwritten. Machine output is one JSON object on stdout; progress and warnings are stderr-only. Native paths stay JSON-safe: names containing `ESC[2J` and an invalid UTF-8 byte scan cleanly with no raw escape byte in stdout and reversible `%1B`/`%FF` encodings. End-to-end: create → scan (2 objects, 3 captured incl. link) → reopen via `status`; stored object bytes equal source bytes when compared independently; coverage, recoverable jobs, and recovery leftovers are visible; source bytes unchanged. `--max-file-bytes 4` produces exit 3, `state: partial`, `coverage.excluded: 1`, and a `policy_excluded` gap naming the file. SIGINT during a 16 MiB copy exits 3 with `state: cancelled`, an "interrupt received" message, empty staging and zero orphan objects. Access-time effects and the protected-copy vs live-best-effort trade-off are documented in `docs/cli.md`, and the method warning prints at selection time.
 
 **Gate:** On supported targets, scan the controlled folder, reopen it, verify hashes independently, and inspect every coverage status; original file bytes remain unchanged. Access-time effects are disclosed rather than asserted absent.
+
+**Gate evidence (2026-10-27, Linux x86_64):** `ghosttrace case create` → `scan` of a controlled folder with a symlink → `status` reopen. Stored object bytes were compared independently against the source files and matched; the manifest verified every stored object; every coverage status (captured, unsupported FIFO, excluded oversized file, cancelled/unobserved under SIGINT) was inspected through the CLI and the coverage table; source bytes were unchanged before/after. Access-time effects are disclosed in `docs/cli.md` rather than claimed absent. Windows and macOS remain unverified targets.
 
 ### P3 — Usable timeline, snapshot diff, and safe alpha reports
 
@@ -1099,7 +1103,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P1 | P1.2 | Transactional case store/service | [x] |
 | P2 | P2.1 | Safe traversal and coverage | [x] |
 | P2 | P2.2 | Copy/hash/checkpoint/recovery | [x] |
-| P2 | P2.3 | Scan/case CLI | [ ] |
+| P2 | P2.3 | Scan/case CLI | [x] |
 | P3 | P3.1 | Timeline and scoped diff | [ ] |
 | P3 | P3.2 | Verification and safe alpha reports | [ ] |
 | P4 | P4.1 | JSONL/syslog adapter contract | [ ] |

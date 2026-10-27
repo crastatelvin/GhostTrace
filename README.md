@@ -11,9 +11,11 @@ instead of silently converting gaps into results.
 
 ## Status
 
-**Early development.** P0 (stack feasibility) is complete; the first forensic
-capability (evidence model and case storage, P1) has not started. Nothing in
-this repository is yet able to analyze real evidence. See
+**Early development.** P0 (stack feasibility), P1 (evidence model, lossless
+paths and timestamps, transactional case storage, shared query service), and
+P2 (safe capture, streaming copy/hash, recovery, and the `case`/`scan`/`status`
+CLI) are complete. The tool can capture a folder into a verifiable case today;
+timeline parsing and analysis arrive with P3+. See
 `docs/plans/2026-10-23-ghosttrace-master-plan.md` for the full phased plan and
 current tracker, and `docs/releases.md` for the verified platform baseline.
 
@@ -26,6 +28,24 @@ current tracker, and `docs/releases.md` for the verified platform baseline.
 | 1.0.0 | Supported open-source release |
 
 These identifiers describe gates, not deadlines.
+
+## Alpha workflow (CLI)
+
+```bash
+cargo build --workspace --locked
+./target/debug/ghosttrace case create --case /cases/demo.ghosttrace-case --label demo
+./target/debug/ghosttrace scan --case /cases/demo.ghosttrace-case --source /evidence/export
+./target/debug/ghosttrace status --case /cases/demo.ghosttrace-case
+```
+
+`scan` copies and hashes every file it can access, records each omission with a
+stable code, and writes an acquisition manifest. Exit `0` means no material
+omission, `3` means the result is partial or was cancelled, `1` means the
+operation failed, `2` means invalid usage. Prefer capturing from a protected
+copy; `--method live-best-effort` is explicitly best effort and the warning is
+printed where the choice is made. Reading files may affect access-time
+metadata; that effect is disclosed, not asserted absent. Full details:
+`docs/cli.md`.
 
 ## License
 
