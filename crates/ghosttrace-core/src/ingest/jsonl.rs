@@ -6,28 +6,37 @@
 
 use serde_json::Value;
 
+use crate::domain::event::NamedEventTimeRef;
+use crate::domain::time::TimeSemantic;
+
 use super::{
     EventDraft, JsonlConfig, ParsedRecord, TimeFormat, invalid_time, numeric_time,
     resolved_text_time, unresolved_time,
 };
 
 /// Parse one JSONL record. The line is already known to be valid UTF-8.
-pub(crate) fn parse_line(text: &str, config: &JsonlConfig) -> ParsedRecord {
+pub(crate) fn parse_line(text: &str, locator: &str, config: &JsonlConfig) -> ParsedRecord {
     let value: Value = match serde_json::from_str(text) {
         Ok(value) => value,
         Err(error) => {
             return ParsedRecord::with_diagnostic(
+                locator,
                 "malformed_record",
                 format!("line is not valid JSON: {error}"),
             );
         }
     };
     let Value::Object(fields) = value else {
-        return ParsedRecord::with_diagnostic("schema_mismatch", "record is not a JSON object");
+        return ParsedRecord::with_diagnostic(
+            locator,
+            "schema_mismatch",
+            "record is not a JSON object",
+        );
     };
 
     let mut record = ParsedRecord {
-        raw_fields: Some(fields.clone()),
+        locator: locator.to_string(),
+        raw_json: Some(Value::Object(fields.clone()).to_string()),
         event: None,
         diagnostics: Vec::new(),
     };
@@ -125,7 +134,11 @@ pub(crate) fn parse_line(text: &str, config: &JsonlConfig) -> ParsedRecord {
         kind,
         summary,
         host,
-        time,
+        times: vec![NamedEventTimeRef {
+            name: "logged".to_string(),
+            semantic: TimeSemantic::LoggedTime,
+            value: time,
+        }],
     });
     record
 }

@@ -209,7 +209,16 @@ times become stable diagnostics rather than silent drops. Batches commit every
 
 Every parsed record is stored as a raw observation with a byte-range locator and
 its original fields. Events are emitted only for (a) valid JSONL objects under
-the fixed mapping and (b) the three tested sshd/sudo message patterns. RFC 3164
-year and zone are never inferred: absent operator declarations leave times
-unresolved, DST overlaps carry both candidates, and a December→January sequence
-is ambiguous.
+the fixed mapping, (b) the three tested sshd/sudo message patterns, and (c)
+well-framed journal entries. RFC 3164 year and zone are never inferred: absent
+operator declarations leave times unresolved, DST overlaps carry both
+candidates, and a December→January sequence is ambiguous.
+
+The journal adapter is byte-oriented because the export stream is binary and
+fields repeat. It keeps ordered `[name, value]` pairs (binary values as
+`{"binary_hex": …}`), skips an oversized or truncated entry whole with a
+diagnostic, and preserves `__CURSOR` verbatim. Realtime timestamps alone
+position an event; monotonic values are stored with clock domain
+`boot:<_BOOT_ID>` and `journal::compare_boot_times` refuses cross-boot order.
+Native `.journal` files are out of scope: `journalctl -o export` is an external
+acquisition step whose output is captured as an ordinary object.

@@ -843,10 +843,10 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P4.1 adapter contract. **Produces:** Journal raw observations and scoped realtime/monotonic/boot events.
 
-- [ ] Test repeated fields, embedded newlines/binary values, length-prefixed fields, truncated lengths, cursor preservation, and boot clock domains.
-- [ ] Implement streaming journal-export parsing without collapsing repeated values into a single map entry.
-- [ ] Test monotonic values from different boot IDs are never directly ordered/correlated.
-- [ ] Document external `journalctl` export as an acquisition step when used; do not require it to parse a captured export.
+- [x] Test repeated fields, embedded newlines/binary values, length-prefixed fields, truncated lengths, cursor preservation, and boot clock domains.
+- [x] Implement streaming journal-export parsing without collapsing repeated values into a single map entry.
+- [x] Test monotonic values from different boot IDs are never directly ordered/correlated.
+- [x] Document external `journalctl` export as an acquisition step when used; do not require it to parse a captured export.
 - [ ] Commit: `feat: preserve binary journal records and boot-scoped times`.
 
 #### P4.3 — Chromium and Firefox captured history packages
@@ -1111,7 +1111,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P3 | P3.1 | Timeline and scoped diff | [x] |
 | P3 | P3.2 | Verification and safe alpha reports | [x] |
 | P4 | P4.1 | JSONL/syslog adapter contract | [x] |
-| P4 | P4.2 | Binary-safe journal export | [ ] |
+| P4 | P4.2 | Binary-safe journal export | [x] |
 | P4 | P4.3 | Browser history/WAL/schema support | [ ] |
 | P4 | P4.4 | FTS and time revisions | [ ] |
 | P5 | P5.1 | Scoped entities/relationships | [ ] |

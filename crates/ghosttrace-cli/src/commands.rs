@@ -255,7 +255,8 @@ pub struct ImportArgs {
     /// Acquisition to read (default: the latest).
     #[arg(long)]
     pub acquisition: Option<String>,
-    /// Declare the format instead of relying on signature detection.
+    /// Declare the format instead of relying on signature detection. Journal
+    /// exports come from an explicit `journalctl -o export` acquisition.
     #[arg(long, value_enum)]
     pub format: Option<FormatArg>,
     /// JSONL: field holding the record time.
@@ -297,6 +298,8 @@ pub enum FormatArg {
     Syslog5424,
     #[value(name = "syslog-3164")]
     Syslog3164,
+    #[value(name = "journal-export")]
+    JournalExport,
 }
 
 impl FormatArg {
@@ -305,6 +308,7 @@ impl FormatArg {
             FormatArg::Jsonl => LogFormat::Jsonl,
             FormatArg::Syslog5424 => LogFormat::Syslog5424,
             FormatArg::Syslog3164 => LogFormat::Syslog3164,
+            FormatArg::JournalExport => LogFormat::JournalExport,
         }
     }
 }

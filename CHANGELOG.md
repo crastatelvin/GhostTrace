@@ -91,3 +91,11 @@ file records implemented capability only.
   overlaps stay ambiguous, and December→January sequences are never silently
   rolled. Only tested sshd/sudo outcomes become events; everything else stays
   raw (`docs/formats.md`).
+- P4.2 (2026-10-27): binary-safe systemd journal export ingestion — ordered
+  `[name, value]` raw pairs keep repeated fields, binary values are preserved
+  as hex, and `__CURSOR` is stored verbatim. Length-prefixed fields, truncated
+  lengths, oversized entries, and framing errors produce structured
+  diagnostics instead of partial records. Realtime timestamps position events;
+  monotonic timestamps are stored with clock domain `boot:<_BOOT_ID>` and are
+  never ordered across boots (`compare_boot_times`). Native `.journal` files
+  remain out of scope: capture `journalctl -o export` externally.

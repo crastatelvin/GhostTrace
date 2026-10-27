@@ -216,3 +216,49 @@ fn an_unknown_signature_needs_a_declared_format() {
     assert_eq!(imported.status.code(), Some(2), "{imported:?}");
     assert!(stderr(&imported).contains("does not match a supported signature"));
 }
+
+#[test]
+fn a_journal_export_imports_with_binary_and_boot_scoped_times() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bytes = b"__CURSOR=s=abc;i=1\n".to_vec();
+    bytes.extend_from_slice(b"__REALTIME_TIMESTAMP=1342540861416409\n");
+    bytes.extend_from_slice(b"__MONOTONIC_TIMESTAMP=21415215982\n");
+    bytes.extend_from_slice(b"_BOOT_ID=6c7c6013a26343b29e964691ff25d04c\n");
+    bytes.extend_from_slice(b"MESSAGE=first\n");
+    bytes.extend_from_slice(b"MESSAGE=second\n");
+    bytes.extend_from_slice(b"BINARY\n");
+    bytes.extend_from_slice(&3_u64.to_le_bytes());
+    bytes.extend_from_slice(b"a\nb");
+    bytes.push(b'\n');
+    bytes.push(b'\n');
+    let case = create_and_scan(dir.path(), &[("journal.export", &bytes)]);
+    let imported = run(&[
+        "import",
+        "--case",
+        case.to_str().unwrap(),
+        "--path",
+        "journal.export",
+    ]);
+    assert_eq!(imported.status.code(), Some(0), "{imported:?}");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&imported)).unwrap();
+    assert_eq!(parsed["parser_id"], "journal.export");
+    assert_eq!(parsed["detected_format"], "journal-export");
+    assert_eq!(parsed["events"], 1);
+    assert_eq!(parsed["observations"], 1);
+    assert_eq!(parsed["state"], "completed");
+
+    let timeline = run(&[
+        "timeline",
+        "--case",
+        case.to_str().unwrap(),
+        "--source",
+        "journal.export",
+        "--limit",
+        "10",
+    ]);
+    let timeline: serde_json::Value = serde_json::from_str(&stdout(&timeline)).unwrap();
+    let rows = timeline["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{timeline}");
+    assert_eq!(rows[0]["summary"], "first");
+    assert_eq!(rows[0]["chosen_seconds"], 1342540861_i64);
+}

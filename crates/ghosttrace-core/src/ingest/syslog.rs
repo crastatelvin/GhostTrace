@@ -10,8 +10,9 @@ use std::str::FromStr;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use chrono_tz::Tz;
 
+use crate::domain::event::NamedEventTimeRef;
 use crate::domain::time::{
-    EventTime, RawTimeValue, TimeAssumption, TimePrecision, TimeStatus, TimeUnit,
+    EventTime, RawTimeValue, TimeAssumption, TimePrecision, TimeSemantic, TimeStatus, TimeUnit,
 };
 use crate::error::{CoreError, CoreResult};
 
@@ -61,7 +62,7 @@ impl Adapter {
         })
     }
 
-    pub(crate) fn parse_line(&mut self, text: &str, rfc5424: bool) -> ParsedRecord {
+    pub(crate) fn parse_line(&mut self, text: &str, locator: &str, rfc5424: bool) -> ParsedRecord {
         let header = if rfc5424 {
             parse_5424(text)
         } else {
@@ -69,11 +70,14 @@ impl Adapter {
         };
         let header = match header {
             Ok(header) => header,
-            Err(reason) => return ParsedRecord::with_diagnostic("malformed_record", reason),
+            Err(reason) => {
+                return ParsedRecord::with_diagnostic(locator, "malformed_record", reason);
+            }
         };
 
         let mut record = ParsedRecord {
-            raw_fields: Some(header.raw_fields()),
+            locator: locator.to_string(),
+            raw_json: Some(serde_json::Value::Object(header.raw_fields()).to_string()),
             event: None,
             diagnostics: Vec::new(),
         };
@@ -102,7 +106,11 @@ impl Adapter {
                 kind,
                 summary,
                 host: header.hostname.clone(),
-                time,
+                times: vec![NamedEventTimeRef {
+                    name: "logged".to_string(),
+                    semantic: TimeSemantic::LoggedTime,
+                    value: time,
+                }],
             });
         }
         record
@@ -147,11 +155,8 @@ impl Adapter {
         };
         let naive = NaiveDateTime::new(date, parsed.time);
 
-        let mut time = EventTime::from_local_wall_clock(
-            naive,
-            Some(&zone),
-            crate::domain::time::TimeSemantic::LoggedTime,
-        );
+        let mut time =
+            EventTime::from_local_wall_clock(naive, Some(&zone), TimeSemantic::LoggedTime);
         time.raw = Some(RawTimeValue {
             field: "timestamp".to_string(),
             integer: None,
@@ -173,11 +178,8 @@ impl Adapter {
                     continue;
                 };
                 let naive = NaiveDateTime::new(date, parsed.time);
-                let interpreted = EventTime::from_local_wall_clock(
-                    naive,
-                    Some(&zone),
-                    crate::domain::time::TimeSemantic::LoggedTime,
-                );
+                let interpreted =
+                    EventTime::from_local_wall_clock(naive, Some(&zone), TimeSemantic::LoggedTime);
                 for candidate in interpreted.candidates {
                     if !candidates.contains(&candidate) {
                         candidates.push(candidate);

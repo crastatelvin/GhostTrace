@@ -9,6 +9,7 @@ structured diagnostic; no adapter invents an event type, a year, or a zone.
 | `jsonl.fields` | 1 | first non-space byte `{` or `[` | every valid mapped object |
 | `syslog.rfc5424` | 1 | `<PRI>1 ` prefix | only the tested auth messages below |
 | `syslog.rfc3164` | 1 | `<PRI>` without a `1 ` version | only the tested auth messages below |
+| `journal.export` | 1 | `__CURSOR=` or `__REALTIME_TIMESTAMP=` | every well-framed entry (`journal.record`) |
 
 `--format` overrides detection. The override is recorded: `parse_runs.parser_id`
 is the declared adapter and the import result reports both `detected_format`
@@ -32,7 +33,9 @@ run and therefore a different revision to review.
 | stored diagnostics | 100 (count is exact) | `diagnostics_truncated` marker |
 
 Batches commit every 500 records. Cancellation is checked between records; a
-cancelled run is stored as `cancelled`, never as `completed`.
+cancelled run is stored as `cancelled`, never as `completed`. For journal
+exports the same byte bound applies to each entry and each binary field; an
+entry over the bound is skipped whole, never partially stored.
 
 ## JSONL mapping
 
@@ -106,8 +109,54 @@ The summary names the method, user, and source address when present. Any other
 message is stored as a raw observation with no event, including messages that
 only look similar. Adding a mapping requires a test next to these.
 
+## Journal export (systemd)
+
+GhostTrace parses the **export stream** produced by
+`journalctl -o export`, not native `.journal` files. The export is an external
+acquisition step: run it on the source host or offline against a mounted image,
+store the resulting bytes as an ordinary captured object, then import that
+object. No `journalctl` process is started by GhostTrace, and parsing never
+requires the source host to be reachable.
+
+The format is binary and order-sensitive, so the raw observation for an entry
+is an **array of `[name, value]` pairs**, not a JSON object:
+
+```json
+[["__CURSOR","s=abc;i=1"],["MESSAGE","first"],["MESSAGE","second"],
+ ["BINARY",{"binary_hex":"666f6f0a6261720007"}]]
+```
+
+- Repeated fields keep every value in source order (`MESSAGE` above appears
+  twice); nothing is collapsed into one map entry.
+- Text fields are stored as strings when the value is valid non-control UTF-8
+  (TAB allowed). Binary fields are always `{"binary_hex": "..."}`, even when
+  the bytes happen to be printable, so the format's distinction survives.
+- `__CURSOR`, `__SEQNUM`, `__SEQNUM_ID`, and unknown `__`-prefixed fields are
+  preserved as ordinary raw fields; nothing is inferred from them.
+- An entry whose 64-bit length or data ends early produces `truncated_field`;
+  an entry or field past `--max-record-bytes` produces `record_too_large` and
+  is skipped whole. A skipped entry is never partially stored.
+- A framing error reports `malformed_field` and resynchronises at the next
+  blank-line boundary.
+
+### Time
+
+`__REALTIME_TIMESTAMP` (microseconds since the Unix epoch) is the only value
+that can position an event on the timeline. `__MONOTONIC_TIMESTAMP` is stored
+as a second named time with clock domain `boot:<_BOOT_ID>`; it is never
+converted to wall-clock time. `compare_boot_times` returns an order only when
+both values share the same boot ID, so values from different boots can never
+be ranked or correlated by accident.
+
+- No realtime value: `time_missing`, the event is `unresolved` with no chosen
+  instant, and the monotonic value (if any) stays boot-scoped.
+- Monotonic value without `_BOOT_ID`: `invalid_time`, `unresolved`, clock
+  domain `unknown`.
+- Unparseable realtime value: `invalid_time`, `invalid`.
+
 ## Not supported (deliberate)
 
+- Native `.journal` files (export them first with `journalctl -o export`).
 - Inferring RFC 3164 years from file mtimes, rotation names, or arrival order.
 - Regular-expression or executable field mappings.
 - Reordering or correlating events across hosts or boots.

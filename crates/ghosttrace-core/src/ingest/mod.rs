@@ -12,6 +12,7 @@
 //!   actually tested. Anything else stays a raw observation with no invented
 //!   type or time.
 
+pub mod journal;
 pub mod jsonl;
 pub mod syslog;
 
@@ -50,13 +51,15 @@ pub enum LogFormat {
     Jsonl,
     Syslog5424,
     Syslog3164,
+    JournalExport,
 }
 
 impl LogFormat {
-    pub const ALL: [LogFormat; 3] = [
+    pub const ALL: [LogFormat; 4] = [
         LogFormat::Jsonl,
         LogFormat::Syslog5424,
         LogFormat::Syslog3164,
+        LogFormat::JournalExport,
     ];
 
     pub fn id(self) -> &'static str {
@@ -64,6 +67,7 @@ impl LogFormat {
             LogFormat::Jsonl => "jsonl",
             LogFormat::Syslog5424 => "syslog-5424",
             LogFormat::Syslog3164 => "syslog-3164",
+            LogFormat::JournalExport => "journal-export",
         }
     }
 
@@ -72,6 +76,7 @@ impl LogFormat {
             LogFormat::Jsonl => "jsonl.fields",
             LogFormat::Syslog5424 => "syslog.rfc5424",
             LogFormat::Syslog3164 => "syslog.rfc3164",
+            LogFormat::JournalExport => "journal.export",
         }
     }
 
@@ -80,6 +85,7 @@ impl LogFormat {
             "jsonl" => Some(LogFormat::Jsonl),
             "syslog-5424" => Some(LogFormat::Syslog5424),
             "syslog-3164" => Some(LogFormat::Syslog3164),
+            "journal-export" => Some(LogFormat::JournalExport),
             _ => None,
         }
     }
@@ -89,6 +95,9 @@ impl LogFormat {
     pub fn detect(prefix: &[u8]) -> Option<Self> {
         let start = prefix.iter().position(|byte| !byte.is_ascii_whitespace())?;
         let rest = &prefix[start..];
+        if rest.starts_with(b"__CURSOR=") || rest.starts_with(b"__REALTIME_TIMESTAMP=") {
+            return Some(LogFormat::JournalExport);
+        }
         if matches!(rest.first(), Some(b'{') | Some(b'[')) {
             return Some(LogFormat::Jsonl);
         }
@@ -406,119 +415,111 @@ pub fn run_import(
     let file = std::fs::File::open(&store_path)
         .map_err(|error| CoreError::Storage(format!("open captured object: {error}")))?;
     let mut records = BufReader::new(file);
-    let mut syslog = syslog::Adapter::new(&request.syslog)?;
-    let mut pending_observations: Vec<ObservationRecord> = Vec::new();
-    let mut pending_events: Vec<Event> = Vec::new();
     let mut cancelled = false;
-    let mut offset = 0_u64;
-    let mut line_number = 0_u64;
-
-    loop {
-        if request.cancelled.load(Ordering::Relaxed) {
-            cancelled = true;
-            break;
-        }
-        if counts.records >= request.max_records {
-            diagnostics.push(
-                "record_limit",
-                &format!("offset:{offset}"),
-                &format!(
-                    "import stopped at the configured limit of {} records",
-                    request.max_records
-                ),
-            );
-            break;
-        }
-        let Some(line) = read_record(&mut records, &mut offset, request.max_record_bytes)? else {
-            break;
+    {
+        let mut committer = Committer {
+            writer,
+            run: &mut run,
+            evidence: &evidence,
+            run_id: &run_id,
+            counts: &mut counts,
+            diagnostics: &mut diagnostics,
+            pending_observations: Vec::new(),
+            pending_events: Vec::new(),
         };
-        line_number += 1;
-        counts.records += 1;
-        let locator = format!(
-            "line:{line_number}:offset:{}:len:{}",
-            line.offset, line.length
-        );
-        if line.truncated {
-            diagnostics.push(
-                "record_too_large",
-                &locator,
-                &format!(
-                    "record exceeds the configured {} byte limit; not parsed",
-                    request.max_record_bytes
-                ),
-            );
-            continue;
-        }
-        let text = match std::str::from_utf8(&line.bytes) {
-            Ok(text) => text,
-            Err(error) => {
-                diagnostics.push(
-                    "invalid_encoding",
-                    &locator,
-                    &format!(
-                        "record is not UTF-8 (valid prefix {} bytes)",
-                        error.valid_up_to()
-                    ),
-                );
-                continue;
+        match format {
+            LogFormat::JournalExport => {
+                let mut reader = journal::Reader::new(&mut records, request.max_record_bytes);
+                loop {
+                    if request.cancelled.load(Ordering::Relaxed) {
+                        cancelled = true;
+                        break;
+                    }
+                    if committer.counts.records >= request.max_records {
+                        committer.diagnostics.push(
+                            "record_limit",
+                            &format!("offset:{}", reader.offset()),
+                            &format!(
+                                "import stopped at the configured limit of {} entries",
+                                request.max_records
+                            ),
+                        );
+                        break;
+                    }
+                    let Some(parsed) = reader.next()? else {
+                        break;
+                    };
+                    committer.counts.records += 1;
+                    committer.commit(parsed)?;
+                }
             }
-        };
-        let parsed = match format {
-            LogFormat::Jsonl => jsonl::parse_line(text, &request.jsonl),
-            LogFormat::Syslog5424 => syslog.parse_line(text, true),
-            LogFormat::Syslog3164 => syslog.parse_line(text, false),
-        };
-        if let Some(fields) = parsed.raw_fields {
-            counts.observations += 1;
-            pending_observations.push(ObservationRecord {
-                id: format!(
-                    "ro-{}",
-                    &sha256_hex(&sha256_bytes(format!("{run_id}|{locator}").as_bytes()))[..16]
-                ),
-                parse_run_id: run_id.clone(),
-                acquisition_id: evidence.acquisition_id.clone(),
-                evidence_id: evidence.id.clone(),
-                locator_kind: "byte_range",
-                locator_identity: locator.clone(),
-                raw_fields_json: Value::Object(fields).to_string(),
-            });
+            _ => {
+                let mut syslog = syslog::Adapter::new(&request.syslog)?;
+                let mut offset = 0_u64;
+                let mut line_number = 0_u64;
+                loop {
+                    if request.cancelled.load(Ordering::Relaxed) {
+                        cancelled = true;
+                        break;
+                    }
+                    if committer.counts.records >= request.max_records {
+                        committer.diagnostics.push(
+                            "record_limit",
+                            &format!("offset:{offset}"),
+                            &format!(
+                                "import stopped at the configured limit of {} records",
+                                request.max_records
+                            ),
+                        );
+                        break;
+                    }
+                    let Some(line) =
+                        read_record(&mut records, &mut offset, request.max_record_bytes)?
+                    else {
+                        break;
+                    };
+                    line_number += 1;
+                    committer.counts.records += 1;
+                    let locator = format!(
+                        "line:{line_number}:offset:{}:len:{}",
+                        line.offset, line.length
+                    );
+                    if line.truncated {
+                        committer.diagnostics.push(
+                            "record_too_large",
+                            &locator,
+                            &format!(
+                                "record exceeds the configured {} byte limit; not parsed",
+                                request.max_record_bytes
+                            ),
+                        );
+                        continue;
+                    }
+                    let text = match std::str::from_utf8(&line.bytes) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            committer.diagnostics.push(
+                                "invalid_encoding",
+                                &locator,
+                                &format!(
+                                    "record is not UTF-8 (valid prefix {} bytes)",
+                                    error.valid_up_to()
+                                ),
+                            );
+                            continue;
+                        }
+                    };
+                    let parsed = match format {
+                        LogFormat::Jsonl => jsonl::parse_line(text, &locator, &request.jsonl),
+                        LogFormat::Syslog5424 => syslog.parse_line(text, &locator, true),
+                        LogFormat::Syslog3164 => syslog.parse_line(text, &locator, false),
+                        LogFormat::JournalExport => unreachable!("handled above"),
+                    };
+                    committer.commit(parsed)?;
+                }
+            }
         }
-        for diagnostic in parsed.diagnostics {
-            diagnostics.push(&diagnostic.code, &locator, &diagnostic.detail);
-        }
-        if let Some(draft) = parsed.event {
-            counts.events += 1;
-            pending_events.push(Event {
-                id: format!(
-                    "ev-{}",
-                    &sha256_hex(&sha256_bytes(
-                        format!("{run_id}|{locator}|{}", draft.kind).as_bytes()
-                    ))[..16]
-                ),
-                kind: draft.kind,
-                summary: draft.summary,
-                observations: Vec::new(),
-                times: vec![NamedEventTimeRef {
-                    name: "logged".to_string(),
-                    semantic: TimeSemantic::LoggedTime,
-                    value: draft.time,
-                }],
-                host_claim: draft.host,
-                revision: run_id.clone(),
-            });
-        }
-        if pending_observations.len() + pending_events.len() >= BATCH_RECORDS {
-            run.counts_json = counts.to_json();
-            run.diagnostics_json = diagnostics.to_json();
-            writer.queue_import_batch(
-                &run,
-                &pending_observations,
-                &pending_events,
-                ACTIVE_REVISION,
-            )?;
-            pending_observations.clear();
-            pending_events.clear();
-        }
+        committer.flush()?;
     }
 
     let (entries, total, truncated) = diagnostics.finish();
@@ -532,12 +533,7 @@ pub fn run_import(
     run.counts_json = counts.to_json();
     run.diagnostics_json = serde_json::to_string(&entries)
         .map_err(|error| CoreError::Storage(format!("diagnostics json: {error}")))?;
-    writer.queue_import_batch(
-        &run,
-        &pending_observations,
-        &pending_events,
-        ACTIVE_REVISION,
-    )?;
+    writer.queue_parse_run(&run)?;
 
     Ok(ImportOutcome {
         run_id,
@@ -609,10 +605,13 @@ impl Diagnostics {
     }
 }
 
-/// What one parsed record produced. `raw_fields` is `None` only when the
-/// record could not be parsed at all.
+/// What one parsed record produced. `raw_json` is `None` only when the record
+/// could not be parsed at all. Text adapters store the original fields as a
+/// JSON object; the journal adapter stores ordered `[name, value]` pairs so
+/// repeated fields survive. Binary journal values are `{"binary_hex": "..."}`.
 pub(crate) struct ParsedRecord {
-    pub raw_fields: Option<serde_json::Map<String, Value>>,
+    pub locator: String,
+    pub raw_json: Option<String>,
     pub event: Option<EventDraft>,
     pub diagnostics: Vec<ImportDiagnostic>,
 }
@@ -621,17 +620,18 @@ pub(crate) struct EventDraft {
     pub kind: String,
     pub summary: String,
     pub host: Option<String>,
-    pub time: EventTime,
+    pub times: Vec<NamedEventTimeRef>,
 }
 
 impl ParsedRecord {
-    pub(crate) fn with_diagnostic(code: &str, detail: impl Into<String>) -> Self {
+    pub(crate) fn with_diagnostic(locator: &str, code: &str, detail: impl Into<String>) -> Self {
         Self {
-            raw_fields: None,
+            locator: locator.to_string(),
+            raw_json: None,
             event: None,
             diagnostics: vec![ImportDiagnostic {
                 code: code.to_string(),
-                locator: String::new(),
+                locator: locator.to_string(),
                 detail: detail.into(),
             }],
         }
@@ -640,9 +640,82 @@ impl ParsedRecord {
     pub(crate) fn diagnostic(&mut self, code: &str, detail: impl Into<String>) {
         self.diagnostics.push(ImportDiagnostic {
             code: code.to_string(),
-            locator: String::new(),
+            locator: self.locator.clone(),
             detail: detail.into(),
         });
+    }
+}
+
+/// Commits parsed records in bounded batches and keeps the run row current.
+struct Committer<'a> {
+    writer: &'a CaseWriter,
+    run: &'a mut ParseRunRecord,
+    evidence: &'a EvidenceRef,
+    run_id: &'a str,
+    counts: &'a mut Counts,
+    diagnostics: &'a mut Diagnostics,
+    pending_observations: Vec<ObservationRecord>,
+    pending_events: Vec<Event>,
+}
+
+impl Committer<'_> {
+    fn commit(&mut self, parsed: ParsedRecord) -> CoreResult<()> {
+        if let Some(raw_json) = parsed.raw_json {
+            self.counts.observations += 1;
+            self.pending_observations.push(ObservationRecord {
+                id: format!(
+                    "ro-{}",
+                    &sha256_hex(&sha256_bytes(
+                        format!("{}|{}", self.run_id, parsed.locator).as_bytes()
+                    ))[..16]
+                ),
+                parse_run_id: self.run_id.to_string(),
+                acquisition_id: self.evidence.acquisition_id.clone(),
+                evidence_id: self.evidence.id.clone(),
+                locator_kind: "byte_range",
+                locator_identity: parsed.locator.clone(),
+                raw_fields_json: raw_json,
+            });
+        }
+        for diagnostic in &parsed.diagnostics {
+            self.diagnostics
+                .push(&diagnostic.code, &parsed.locator, &diagnostic.detail);
+        }
+        if let Some(draft) = parsed.event {
+            self.counts.events += 1;
+            self.pending_events.push(Event {
+                id: format!(
+                    "ev-{}",
+                    &sha256_hex(&sha256_bytes(
+                        format!("{}|{}|{}", self.run_id, parsed.locator, draft.kind).as_bytes()
+                    ))[..16]
+                ),
+                kind: draft.kind,
+                summary: draft.summary,
+                observations: Vec::new(),
+                times: draft.times,
+                host_claim: draft.host,
+                revision: self.run_id.to_string(),
+            });
+        }
+        if self.pending_observations.len() + self.pending_events.len() >= BATCH_RECORDS {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> CoreResult<()> {
+        self.run.counts_json = self.counts.to_json();
+        self.run.diagnostics_json = self.diagnostics.to_json();
+        self.writer.queue_import_batch(
+            self.run,
+            &self.pending_observations,
+            &self.pending_events,
+            ACTIVE_REVISION,
+        )?;
+        self.pending_observations.clear();
+        self.pending_events.clear();
+        Ok(())
     }
 }
 

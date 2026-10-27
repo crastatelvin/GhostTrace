@@ -250,9 +250,10 @@ ghosttrace import --case <DIR>.ghosttrace-case --path var/log/syslog \
 
 `--path` is the captured relative path; `--object <ID>` selects the evidence
 object directly. Exactly one is required. `--acquisition` selects a capture
-(default: latest). `--format` accepts `jsonl`, `syslog-5424`, or `syslog-3164`
-and overrides signature detection; both detected and declared formats are
-reported.
+(default: latest). `--format` accepts `jsonl`, `syslog-5424`, `syslog-3164`, or
+`journal-export` and overrides signature detection; both detected and declared
+formats are reported. Native `.journal` files are not parsed: capture a
+`journalctl -o export` stream first.
 
 Output: `{"run_id","acquisition_id","evidence_id","path","parser_id",
 "parser_version","detected_format","declared_format","state","records",
@@ -267,4 +268,6 @@ the same configuration reuses the run id and adds no duplicate rows.
 Time rules and the exact accepted/rejected records are in
 [formats.md](formats.md). Unmatched messages stay raw observations; RFC 3164
 times stay unresolved without `--year`/`--timezone`; DST overlaps and
-December→January sequences stay `ambiguous`.
+December→January sequences stay `ambiguous`. Journal monotonic values stay
+boot-scoped and never choose a timeline position; only
+`__REALTIME_TIMESTAMP` does.

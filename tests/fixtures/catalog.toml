@@ -40,3 +40,11 @@ name = "log-formats"
 path = "log-formats/README.md"
 license = "Apache-2.0 OR MIT"
 sha256 = "50bad2fef14831f282272405f963adf0c61a812ee923bceb22677d34bdb247bd"
+
+# P4.2 journal export definitions. The tests generate the byte streams
+# deterministically; only the expected mappings are tracked.
+[[fixture]]
+name = "journal"
+path = "journal/README.md"
+license = "Apache-2.0 OR MIT"
+sha256 = "58aab6bfc430113ff1a409ad5232918b747639cf1d78727d8dd834caa632a225"
