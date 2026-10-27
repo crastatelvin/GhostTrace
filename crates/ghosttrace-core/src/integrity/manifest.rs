@@ -8,7 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::error::{CoreError, CoreResult};
 use crate::integrity::hash::{StreamDigest, digest_file, sha256_hex};
@@ -106,6 +107,9 @@ impl ManifestV1 {
     pub fn verify_objects(&self, case_root: &Path) -> CoreResult<()> {
         for object in &self.objects {
             let path = case_root.join(&object.store_subpath);
+            if !path.exists() {
+                return Err(CoreError::CorruptEvidence);
+            }
             let actual = digest_file(&path)?;
             let expected = StreamDigest {
                 byte_length: object.byte_length,
@@ -117,6 +121,205 @@ impl ManifestV1 {
         }
         Ok(())
     }
+}
+
+/// Result of verifying one manifest file against the case store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManifestVerification {
+    pub manifest_id: String,
+    pub acquisition_id: String,
+    pub format: String,
+    pub objects_verified: usize,
+    pub total_bytes: u64,
+    pub captured: u64,
+    pub gaps: u64,
+}
+
+/// Any JSON value, parsed only to reject duplicate object keys. Numbers are
+/// not interpreted here; the real parse follows serde_json's normal rules.
+#[derive(Debug)]
+#[allow(dead_code)] // payloads are carried only to keep the visitor generic
+enum AnyValue {
+    Null,
+    Bool,
+    Number,
+    String,
+    Array(Vec<AnyValue>),
+    Object(Vec<(String, AnyValue)>),
+}
+
+impl<'de> Deserialize<'de> for AnyValue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ValueVisitor;
+
+        impl<'de> Visitor<'de> for ValueVisitor {
+            type Value = AnyValue;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("any JSON value")
+            }
+
+            fn visit_unit<E: de::Error>(self) -> Result<AnyValue, E> {
+                Ok(AnyValue::Null)
+            }
+
+            fn visit_none<E: de::Error>(self) -> Result<AnyValue, E> {
+                Ok(AnyValue::Null)
+            }
+
+            fn visit_some<D: Deserializer<'de>>(
+                self,
+                deserializer: D,
+            ) -> Result<AnyValue, D::Error> {
+                AnyValue::deserialize(deserializer)
+            }
+
+            fn visit_bool<E: de::Error>(self, _value: bool) -> Result<AnyValue, E> {
+                Ok(AnyValue::Bool)
+            }
+
+            fn visit_i64<E: de::Error>(self, _value: i64) -> Result<AnyValue, E> {
+                Ok(AnyValue::Number)
+            }
+
+            fn visit_u64<E: de::Error>(self, _value: u64) -> Result<AnyValue, E> {
+                Ok(AnyValue::Number)
+            }
+
+            fn visit_f64<E: de::Error>(self, _value: f64) -> Result<AnyValue, E> {
+                Ok(AnyValue::Number)
+            }
+
+            fn visit_str<E: de::Error>(self, _value: &str) -> Result<AnyValue, E> {
+                Ok(AnyValue::String)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<AnyValue, A::Error> {
+                let mut values = Vec::new();
+                while let Some(value) = sequence.next_element()? {
+                    values.push(value);
+                }
+                Ok(AnyValue::Array(values))
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<AnyValue, A::Error> {
+                let mut seen = std::collections::HashSet::new();
+                let mut values = Vec::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if !seen.insert(key.clone()) {
+                        return Err(de::Error::custom(format!("duplicate object key: {key}")));
+                    }
+                    values.push((key, map.next_value()?));
+                }
+                Ok(AnyValue::Object(values))
+            }
+        }
+
+        deserializer.deserialize_any(ValueVisitor)
+    }
+}
+
+impl ManifestV1 {
+    /// Parse and verify a manifest file: duplicate keys, format version,
+    /// object references, and the stored bytes themselves.
+    pub fn verify_file(path: &Path, case_root: &Path) -> CoreResult<ManifestVerification> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|error| CoreError::Storage(format!("manifest read: {error}")))?;
+        reject_duplicate_keys(&text)?;
+
+        let header: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| CoreError::Unsupported(format!("manifest json: {error}")))?;
+        match header.get("format").and_then(|value| value.as_str()) {
+            Some(MANIFEST_FORMAT) => {}
+            Some(other) => {
+                return Err(CoreError::Unsupported(format!(
+                    "manifest format {other} is not supported"
+                )));
+            }
+            None => {
+                return Err(CoreError::Unsupported(
+                    "manifest has no format field".into(),
+                ));
+            }
+        }
+        let manifest: ManifestV1 = serde_json::from_value(header)
+            .map_err(|error| CoreError::Unsupported(format!("manifest shape: {error}")))?;
+        manifest.validate_references()?;
+        manifest.verify_objects(case_root)?;
+
+        Ok(ManifestVerification {
+            manifest_id: manifest.manifest_id,
+            acquisition_id: manifest.acquisition_id,
+            format: manifest.format,
+            objects_verified: manifest.objects.len(),
+            total_bytes: manifest
+                .objects
+                .iter()
+                .map(|object| object.byte_length)
+                .sum(),
+            captured: manifest.coverage.captured,
+            gaps: manifest.coverage.excluded
+                + manifest.coverage.inaccessible
+                + manifest.coverage.unstable
+                + manifest.coverage.vanished
+                + manifest.coverage.unsupported
+                + manifest.coverage.unobserved,
+        })
+    }
+
+    /// Reject duplicate object identities and store paths that could escape
+    /// the case's content-addressed store.
+    pub fn validate_references(&self) -> CoreResult<()> {
+        let mut ids = std::collections::HashSet::new();
+        let mut subpaths = std::collections::HashSet::new();
+        for object in &self.objects {
+            if !ids.insert(object.object_id.as_str()) {
+                return Err(CoreError::Unsupported(format!(
+                    "duplicate object id {}",
+                    object.object_id
+                )));
+            }
+            if !subpaths.insert(object.store_subpath.as_str()) {
+                return Err(CoreError::Unsupported(format!(
+                    "duplicate object path {}",
+                    object.store_subpath
+                )));
+            }
+            if !safe_store_subpath(&object.store_subpath) {
+                return Err(CoreError::Unsupported(format!(
+                    "unsafe object path {}",
+                    object.store_subpath
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Only `objects/sha256/<bucket>/<hex>` with normal components may be read.
+fn safe_store_subpath(subpath: &str) -> bool {
+    let components: Vec<&str> = subpath.split('/').collect();
+    components.len() == 4
+        && components[0] == "objects"
+        && components[1] == "sha256"
+        && components[2].len() == 2
+        && !components[2].is_empty()
+        && components[3].len() == 64
+        && components
+            .iter()
+            .all(|component| *component != "." && *component != ".." && !component.is_empty())
+}
+
+/// Reject duplicate object keys anywhere in the document. serde_json keeps
+/// the last duplicate silently, which is exactly what an integrity check must
+/// not do.
+pub fn reject_duplicate_keys(text: &str) -> CoreResult<()> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    AnyValue::deserialize(&mut deserializer)
+        .map_err(|error| CoreError::Unsupported(format!("manifest json: {error}")))?;
+    deserializer
+        .end()
+        .map_err(|error| CoreError::Unsupported(format!("manifest json: {error}")))
 }
 
 fn parse_hex(text: &str) -> CoreResult<[u8; 32]> {

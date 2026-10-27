@@ -2,6 +2,7 @@
 
 mod check;
 mod fixtures;
+mod package;
 
 use clap::Parser;
 
@@ -16,6 +17,18 @@ enum Cli {
         #[arg(long)]
         verify: bool,
     },
+    /// Build a checksummed prerelease archive from an already-built CLI.
+    Package {
+        /// Directory that receives the archive and its .sha256 file.
+        #[arg(long, default_value = "dist")]
+        output: std::path::PathBuf,
+        /// CLI binary to package (default: target/release/ghosttrace).
+        #[arg(long)]
+        binary: Option<std::path::PathBuf>,
+        /// Version string used in the package name.
+        #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
+        version: String,
+    },
 }
 
 fn main() {
@@ -29,6 +42,16 @@ fn main() {
                 .join("tests/fixtures");
             fixtures::verify(&root)
         }
+        Cli::Package {
+            output,
+            binary,
+            version,
+        } => package::run(&package::Options {
+            output,
+            binary,
+            version,
+        })
+        .map(|summary| println!("{}", serde_json::to_string(&summary).expect("summary"))),
     };
     if let Err(problem) = result {
         eprintln!("xtask: {problem}");

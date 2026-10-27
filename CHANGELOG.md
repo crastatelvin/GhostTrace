@@ -72,3 +72,12 @@ file records implemented capability only.
   Migration `0002_file_times` adds nullable source mtime columns so metadata
   comparisons rest on captured facts. Documented class semantics and limits
   (`docs/cli.md`, `diff --help`).
+- P3.2 (2026-10-27): verification and safe reports — `ghosttrace verify`
+  re-hashes stored objects and fails with exit 4 on tampering, missing objects,
+  duplicate JSON keys, unsupported versions, duplicate references, or unsafe
+  store paths; `ghosttrace report` publishes a versioned `ghosttrace-report/1`
+  JSON plus a self-contained escaped HTML view (no scripts, links, or remote
+  resources; control/bidi characters rendered visibly), atomically and without
+  overwriting an earlier export. Added `xtask package` archive/checksum output
+  with a build/target inventory, a ten-minute walkthrough with exact expected
+  results (`docs/walkthrough.md`), report docs, and prerelease notes.

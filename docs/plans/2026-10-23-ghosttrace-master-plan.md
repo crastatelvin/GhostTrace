@@ -811,15 +811,17 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Captured objects/manifests, query selection. **Produces:** Versioned report export, unsigned manifest verification, atomic report publication.
 
-- [ ] Test object tampering, missing object, malformed manifest, duplicate keys, unsupported version, and reported coverage omissions.
-- [ ] Test script tags, quotes, terminal controls, malicious URLs, invalid path bytes, and Unicode controls stay inert and readable.
-- [ ] Implement full-fidelity JSON plus self-contained escaped HTML with no scripts/remote resources; include timezone/filter/provenance/limitations.
-- [ ] Test report failure leaves no apparently completed export and never overwrites the previous report.
-- [ ] Write a ten-minute synthetic folder investigation with exact expected event/hash/diff results.
-- [ ] Add a minimal native CLI archive/checksum packaging command for early prereleases, including license/help/sample data and actual build/target inventory; smoke-run the extracted CLI offline. P6 extends it to the native desktop/CLI pair; P11 adds full supported distribution/provenance/SBOM workflows.
+- [x] Test object tampering, missing object, malformed manifest, duplicate keys, unsupported version, and reported coverage omissions.
+- [x] Test script tags, quotes, terminal controls, malicious URLs, invalid path bytes, and Unicode controls stay inert and readable.
+- [x] Implement full-fidelity JSON plus self-contained escaped HTML with no scripts/remote resources; include timezone/filter/provenance/limitations.
+- [x] Test report failure leaves no apparently completed export and never overwrites the previous report.
+- [x] Write a ten-minute synthetic folder investigation with exact expected event/hash/diff results.
+- [x] Add a minimal native CLI archive/checksum packaging command for early prereleases, including license/help/sample data and actual build/target inventory; smoke-run the extracted CLI offline. P6 extends it to the native desktop/CLI pair; P11 adds full supported distribution/provenance/SBOM workflows.
 - [ ] Commit: `feat: export safe timelines and verify evidence manifests`.
 
 **P3 release gate:** All P1–P3 tests pass; a new user completes the folder workflow from docs; publish `0.1.0-alpha.1` only through Section 20's release procedure.
+
+**Gate evidence (2026-10-27, Linux x86_64):** `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked` (22 suites), and `cargo run -p xtask -- check` pass on this commit, including the new `cli_verify` (9 tests) and `cli_report` (5 tests) suites. The ten-minute walkthrough in `docs/walkthrough.md` was re-run verbatim: three files, two captures, four diff rows (`unchanged`, `content_changed`, `appeared`, `not_present_in_captured_scope`), three verified objects, three events, and a report that refused to overwrite itself. `xtask package --version 0.1.0-alpha.1` produced the native archive and matching `.sha256`; the extracted release binary ran `--version` and `sqlite-info` offline. The draft prerelease is created through Section 20 with only this verified target; Windows/macOS capture and live screen-reader smoke remain unverified and are not advertised.
 
 ### P4 — Multi-source adapters, time review, and full-text search
 
@@ -1107,7 +1109,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P2 | P2.2 | Copy/hash/checkpoint/recovery | [x] |
 | P2 | P2.3 | Scan/case CLI | [x] |
 | P3 | P3.1 | Timeline and scoped diff | [x] |
-| P3 | P3.2 | Verification and safe alpha reports | [ ] |
+| P3 | P3.2 | Verification and safe alpha reports | [x] |
 | P4 | P4.1 | JSONL/syslog adapter contract | [ ] |
 | P4 | P4.2 | Binary-safe journal export | [ ] |
 | P4 | P4.3 | Browser history/WAL/schema support | [ ] |

@@ -8,6 +8,10 @@ talks to SQLite directly.
 ghosttrace case create --case <DIR>.ghosttrace-case --label <LABEL>
 ghosttrace scan --case <DIR>.ghosttrace-case --source <PATH> [--source <PATH>...]
 ghosttrace status --case <DIR>.ghosttrace-case
+ghosttrace timeline --case <DIR>.ghosttrace-case [filters]
+ghosttrace diff --case <DIR>.ghosttrace-case --before <ID> --after <ID>
+ghosttrace verify --case <DIR>.ghosttrace-case [--manifest <FILE>]
+ghosttrace report --case <DIR>.ghosttrace-case --output <DIR> [--report-id NAME]
 ghosttrace sqlite-info
 ```
 
@@ -26,7 +30,7 @@ ghosttrace sqlite-info
 | `1` | Operation failed (missing case, storage or permission error) |
 | `2` | Invalid usage (bad arguments or case layout) |
 | `3` | Partial result: coverage omissions, copy skips, or cancellation |
-| `4` | Verification mismatch (reserved for verify commands) |
+| `4` | Manifest verification failed (tampering, missing object, malformed or unsupported manifest) |
 
 A `3` is a result, not a crash: the acquisition row and manifest exist, and
 `status` shows exactly which paths were omitted and why.
@@ -180,3 +184,50 @@ is in the case's `coverage` table. Every gap carries a stable `code`
 
 Verify stored copies independently with any SHA-256 tool: the manifest lists
 each object's byte length and digest, and the object path is its digest.
+
+## `verify`
+
+Re-reads one acquisition manifest and re-hashes every stored object. Unsigned
+integrity check only: it proves the stored bytes still match the record.
+
+```bash
+ghosttrace verify --case <DIR>.ghosttrace-case
+ghosttrace verify --case … --acquisition <ID>
+ghosttrace verify --case … --manifest <FILE>
+```
+
+Success prints `{"verified":true,…}` and exits `0`. Any of tampered bytes
+(`integrity_mismatch`), a missing object (`corrupt_evidence`), duplicate JSON
+keys, an unsupported format version, duplicate object references, or a store
+path escaping `objects/sha256/` exits `4`. Recorded coverage gaps do not fail
+verification. See [reports.md](reports.md) for the full rule table.
+
+## `report`
+
+Builds a versioned report from recorded rows only and publishes it atomically:
+
+```bash
+ghosttrace report --case <DIR>.ghosttrace-case --output /cases/reports \
+  [--acquisition <ID>] [--limit 500] [--report-id NAME]
+```
+
+Output: `{"report_id","format","directory","json","html","objects","events","gaps"}`.
+The directory holds `report.json` (full fidelity, `ghosttrace-report/1`) and
+`report.html` (self-contained, no scripts/links/remote resources, all values
+escaped, control/bidi characters rendered visibly).
+
+An existing report directory is never overwritten: the command exits `1` and
+leaves the previous export untouched. A failure during publication removes the
+staging directory, so no partial export appears complete. See
+[reports.md](reports.md).
+
+## Packaging an early build
+
+```bash
+cargo build -p ghosttrace-cli --release
+cargo run -p xtask -- package --output dist --version 0.1.0-alpha.1
+```
+
+The archive includes the binary, licences, docs, `help.txt`, sample data, and a
+`build-info.json` inventory, plus a sibling `.sha256`. Existing archives are
+never overwritten.

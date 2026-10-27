@@ -15,7 +15,8 @@ Source (protected copy / acknowledged live source)
   → Parsers      bounded workers, raw observations, journal/EVTX/browser adapters (P4/P8)
   → Service      shared query contract for desktop, TUI, CLI (P1.2+)
   → Analysis     versioned revisions, rules, reversible review (P5)
-  → Packages     redacted reports, exact-byte manifests, signatures (P3.2/P9)
+  → Reports      versioned JSON/HTML export, manifest verification (P3.2, below)
+  → Packages     signed distribution, SBOM/provenance (P9/P11)
 ```
 
 The core library (`ghosttrace-core`) holds every layer above "source". Front
@@ -154,3 +155,33 @@ batches or nothing; readers are separate read-only connections; migrations are
 sequential, checksummed, and preceded by a validated online backup; the query
 contract is a total order over (chosen time, nanos, event id) with an explicit
 unresolved view.
+
+## Reports and verification section (P3.2)
+
+`ghosttrace verify` re-reads a manifest from disk and re-hashes every object it
+references. The manifest is parsed twice on purpose: once with a visitor that
+rejects duplicate JSON keys anywhere in the document, then with the typed
+`ManifestV1` shape. References are validated before any file is opened —
+duplicate object IDs/paths and any `store_subpath` outside
+`objects/sha256/<bucket>/<hex>` are rejected, so a hostile manifest cannot make
+the verifier read outside the case store. Missing or differing bytes fail
+closed; recorded coverage gaps are reported, not treated as tampering.
+
+`ghosttrace report` builds `ReportV1` (`ghosttrace-report/1`) from recorded rows
+only: case identity and display timezone, acquisition method/roots/state,
+coverage counts plus a bounded gap list, every captured object's full SHA-256,
+the acquisition's application-clock events, provenance, and fixed limitation
+statements. The JSON rendering is full fidelity. The HTML rendering is a
+separate, deliberately dumb presentation layer: inline CSS only, no scripts, no
+links, no remote resources, a `default-src 'none'` CSP, HTML escaping for every
+value, and `\u{...}` escapes for C0/C1 and Unicode bidi/format controls.
+
+Publication stages both files in a private directory inside the output folder,
+fsyncs them, renames the directory into place, and refuses to overwrite an
+existing report ID. A failure removes the staging directory, so an incomplete
+run never leaves something that looks like a finished export.
+
+`xtask package` is the early packaging path: it archives an already-built
+binary with licences, docs, `--help` output, sample data, and a `build-info.json`
+inventory (target triple, rustc, commit, per-file SHA-256), then writes the
+archive digest. It does not build, sign, or upload anything.

@@ -21,6 +21,8 @@ use ghosttrace_core::domain::case::AcquisitionMethod;
 use ghosttrace_core::domain::path::NativePath;
 use ghosttrace_core::domain::query::{EventQuery, EventRow, TimeCursor};
 use ghosttrace_core::error::CoreError;
+use ghosttrace_core::integrity::manifest::ManifestV1;
+use ghosttrace_core::reports::{self, ReportContext, ReportSelection};
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
 use ghosttrace_core::storage::CASE_DIR_SUFFIX;
 
@@ -30,6 +32,7 @@ pub const EXIT_OK: u8 = 0;
 pub const EXIT_FAILED: u8 = 1;
 pub const EXIT_USAGE: u8 = 2;
 pub const EXIT_PARTIAL: u8 = 3;
+pub const EXIT_VERIFY: u8 = 4;
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
@@ -67,6 +70,23 @@ pub enum Cli {
  prove a copy or move. Acquisitions with different roots are reported unknown.\
  Timestamp equality never proves unchanged bytes.")]
     Diff(DiffArgs),
+    /// Verify a stored acquisition manifest and its captured objects.
+    #[command(
+        long_about = "Verify a stored acquisition manifest and its captured objects.\
+\n\nThe manifest is re-read from disk, duplicate JSON keys are rejected, the\
+ format version must match, every referenced path must stay inside the case\
+ store, and every stored object is re-hashed. This is an unsigned integrity\
+ check: it proves the bytes still match the record, not who produced them.\
+ Exit code 4 means the manifest did not verify; 0 means it did."
+    )]
+    Verify(VerifyArgs),
+    /// Export a versioned JSON + self-contained HTML report.
+    #[command(long_about = "Export a versioned JSON + self-contained HTML report.\
+\n\nThe report describes the recorded case only: coverage gaps, stored object\
+ hashes, and the application-clock timeline. The HTML carries no scripts, no\
+ links, and no remote resources. Publication is atomic and never overwrites an\
+ existing report directory.")]
+    Report(ReportArgs),
 }
 
 #[derive(Subcommand)]
@@ -174,6 +194,38 @@ pub struct DiffArgs {
 }
 
 #[derive(Args)]
+pub struct VerifyArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Manifest file to verify (default: the manifest of --acquisition or the latest).
+    #[arg(long)]
+    pub manifest: Option<PathBuf>,
+    /// Acquisition whose manifest to verify when --manifest is omitted.
+    #[arg(long)]
+    pub acquisition: Option<String>,
+}
+
+#[derive(Args)]
+pub struct ReportArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Directory that will receive the report directory.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Acquisition to report (default: the latest).
+    #[arg(long)]
+    pub acquisition: Option<String>,
+    /// Maximum timeline events included in the report.
+    #[arg(long, default_value_t = 500)]
+    pub limit: u32,
+    /// Fixed report identity; defaults to `report-<acquisition>-<unix seconds>`.
+    #[arg(long)]
+    pub report_id: Option<String>,
+}
+
+#[derive(Args)]
 pub struct StatusArgs {
     /// Existing case directory.
     #[arg(long)]
@@ -254,6 +306,31 @@ struct TimelineOutput {
 }
 
 #[derive(Serialize)]
+struct VerifyOutput {
+    verified: bool,
+    manifest_id: String,
+    acquisition_id: String,
+    format: String,
+    objects_verified: usize,
+    total_bytes: u64,
+    captured: u64,
+    gaps: u64,
+    signed: bool,
+}
+
+#[derive(Serialize)]
+struct ReportOutput {
+    report_id: String,
+    format: String,
+    directory: String,
+    json: String,
+    html: String,
+    objects: usize,
+    events: usize,
+    gaps: u64,
+}
+
+#[derive(Serialize)]
 struct StatusOutput {
     case_id: String,
     display_timezone: String,
@@ -277,6 +354,130 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Status(args) => status(args),
         Cli::Timeline(args) => timeline(args),
         Cli::Diff(args) => diff(args),
+        Cli::Verify(args) => verify(args),
+        Cli::Report(args) => report(args),
+    }
+}
+
+fn verify(args: VerifyArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    let case_root = session.layout().root().to_path_buf();
+    let manifest_path = match args.manifest {
+        Some(path) => path,
+        None => {
+            let reader = match session.reader() {
+                Ok(reader) => reader,
+                Err(error) => return fail(&error),
+            };
+            let acquisition = match args.acquisition {
+                Some(id) => id,
+                None => {
+                    let latest = reader
+                        .connection()
+                        .query_row(
+                            "SELECT id FROM acquisitions
+                             ORDER BY started_seconds DESC, id DESC LIMIT 1",
+                            [],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .map_err(|error| {
+                            CoreError::InvalidInput(format!("no acquisition in this case: {error}"))
+                        });
+                    match latest {
+                        Ok(id) => id,
+                        Err(error) => return fail(&error),
+                    }
+                }
+            };
+            session
+                .layout()
+                .manifests_root()
+                .join(format!("manifest-{acquisition}.json"))
+        }
+    };
+
+    match ManifestV1::verify_file(&manifest_path, &case_root) {
+        Ok(result) => {
+            output::emit_json(&VerifyOutput {
+                verified: true,
+                manifest_id: result.manifest_id,
+                acquisition_id: result.acquisition_id,
+                format: result.format,
+                objects_verified: result.objects_verified,
+                total_bytes: result.total_bytes,
+                captured: result.captured,
+                gaps: result.gaps,
+                signed: false,
+            });
+            EXIT_OK
+        }
+        Err(error) => {
+            output::emit_error(error.code(), &error.to_string());
+            match error {
+                CoreError::IntegrityMismatch
+                | CoreError::CorruptEvidence
+                | CoreError::Unsupported(_) => EXIT_VERIFY,
+                _ => EXIT_FAILED,
+            }
+        }
+    }
+}
+
+fn report(args: ReportArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    let reader = match session.reader() {
+        Ok(reader) => reader,
+        Err(error) => return fail(&error),
+    };
+    let context = ReportContext {
+        case_id: session.case_id().to_string(),
+        label: session.config().label.clone(),
+        display_timezone: session.config().display_timezone.clone(),
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let selection = ReportSelection {
+        acquisition_id: args.acquisition,
+        event_limit: args.limit,
+    };
+    let mut report = match reports::build_report(&reader, &context, &selection) {
+        Ok(report) => report,
+        Err(error) => return fail(&error),
+    };
+    if let Some(report_id) = args.report_id {
+        if !report_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            || report_id.starts_with('.')
+        {
+            output::emit_error(
+                "invalid_report_id",
+                "report id may only contain letters, digits, '-', '_' and '.'",
+            );
+            return EXIT_USAGE;
+        }
+        report.report_id = report_id;
+    }
+    match reports::publish(&report, &args.output) {
+        Ok(published) => {
+            output::emit_json(&ReportOutput {
+                report_id: report.report_id.clone(),
+                format: report.format.clone(),
+                directory: native_path(&published.directory).encoded(),
+                json: native_path(&published.json_path).encoded(),
+                html: native_path(&published.html_path).encoded(),
+                objects: report.objects.len(),
+                events: report.timeline.len(),
+                gaps: report.coverage.total_gaps(),
+            });
+            EXIT_OK
+        }
+        Err(error) => fail(&error),
     }
 }
 
