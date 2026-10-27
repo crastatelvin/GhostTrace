@@ -749,11 +749,13 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Case writer and native paths. **Produces:** Validated `CaptureSpec`, source handle abstraction limited to capture, coverage outcomes.
 
-- [ ] Test root/case-directory overlap rejection, escaping symlinks/reparse points, loops, hardlinks, deep paths, permission-denied subtree, vanished entry, and FIFO/device exclusion.
-- [ ] Implement no-follow root-relative descriptor/handle traversal, object identity checks, and native relative-path preservation.
-- [ ] Record each skipped/failed/excluded path with stable error category and coverage scope; aggregate bounded diagnostic examples.
-- [ ] Run platform-specific permission tests as an ordinary user, not only elevated/root CI.
-- [ ] Commit: `feat: capture filesystem scope without following unsafe links`.
+- [x] Test root/case-directory overlap rejection, escaping symlinks/reparse points, loops, hardlinks, deep paths, permission-denied subtree, vanished entry, and FIFO/device exclusion.
+- [x] Implement no-follow root-relative descriptor/handle traversal, object identity checks, and native relative-path preservation.
+- [x] Record each skipped/failed/excluded path with stable error category and coverage scope; aggregate bounded diagnostic examples.
+- [x] Run platform-specific permission tests as an ordinary user, not only elevated/root CI.
+- [x] Commit: `feat: capture filesystem scope without following unsafe links`.
+
+**Completion evidence (2026-10-27):** `cargo test -p ghosttrace-core --test capture_scope --test capture_paths --locked` → 13 tests pass (overlap rejected in all three positions; duplicates/follow requests/missing roots rejected with stable codes; `path-edges` walks to 3 real files + 2 not-followed links, hardlink alias counted once, FIFO/socket unsupported, depth and entry caps disclosed as unobserved; invalid-UTF-8 and Unicode-distinct names byte-exact; permission-denied subtree recorded as `permission_denied`, test self-skips under root; single-file root captures exactly one entry with empty relative path). Full `xtask check` passes; catalog verifies the tracked `path-edges` definition. Unix verified; Windows is a reviewed "not implemented yet" stub. `docs/architecture.md` capture section written.
 
 #### P2.2 — Stream copied bytes, hash, checkpoint, and recover
 
@@ -1093,7 +1095,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P0 | P0.2 | Reproducible checks, licenses, contribution workflow | [x] |
 | P1 | P1.1 | Lossless paths and time model | [x] |
 | P1 | P1.2 | Transactional case store/service | [x] |
-| P2 | P2.1 | Safe traversal and coverage | [ ] |
+| P2 | P2.1 | Safe traversal and coverage | [x] |
 | P2 | P2.2 | Copy/hash/checkpoint/recovery | [ ] |
 | P2 | P2.3 | Scan/case CLI | [ ] |
 | P3 | P3.1 | Timeline and scoped diff | [ ] |

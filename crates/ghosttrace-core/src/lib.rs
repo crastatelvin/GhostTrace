@@ -10,6 +10,7 @@
 //! - [`sqlite_report`] — linked-runtime verification (P0.1)
 //! - [`jobs`] — job states, checkpoints, and recovery detection (P1.2)
 
+pub mod capture;
 pub mod domain;
 pub mod error;
 pub mod jobs;

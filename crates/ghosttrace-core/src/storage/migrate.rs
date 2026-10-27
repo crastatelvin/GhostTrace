@@ -10,7 +10,7 @@
 //!   if the backup fails, the migration aborts before touching schema.
 //! - A new empty case needs no pre-creation backup.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rusqlite::Connection;
 
@@ -263,18 +263,16 @@ mod tests {
     use super::*;
     use crate::storage::CaseLayout;
 
-    fn fresh_case(dir: &Path) -> (PathBuf, Connection) {
+    fn fresh_database(dir: &Path) -> Connection {
         let layout = CaseLayout::new(dir);
         layout.create_private_tree().unwrap();
-        let database = layout.database_path();
-        let connection = Connection::open(&database).unwrap();
-        (database, connection)
+        Connection::open(layout.database_path()).unwrap()
     }
 
     #[test]
     fn fresh_case_records_migration_checksum() {
         let dir = tempfile::tempdir().unwrap();
-        let (database, connection) = fresh_case(dir.path());
+        let connection = fresh_database(dir.path());
         let outcome = create_schema(&connection).unwrap();
         assert_eq!(outcome.applied.len(), 1);
         assert_eq!(outcome.applied[0].name, "0001_case");
@@ -286,13 +284,12 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(stored, SUPPORTED_SCHEMA_VERSION);
-        let _ = database;
     }
 
     #[test]
     fn recorded_history_must_match_embedded_migrations() {
         let dir = tempfile::tempdir().unwrap();
-        let (_database, connection) = fresh_case(dir.path());
+        let connection = fresh_database(dir.path());
         create_schema(&connection).unwrap();
         // Simulate an edited applied migration, then reopen.
         connection
@@ -308,7 +305,7 @@ mod tests {
     #[test]
     fn newer_schema_is_rejected_not_downgraded() {
         let dir = tempfile::tempdir().unwrap();
-        let (_database, connection) = fresh_case(dir.path());
+        let connection = fresh_database(dir.path());
         create_schema(&connection).unwrap();
         connection
             .execute_batch("PRAGMA user_version = 99;")
@@ -322,7 +319,7 @@ mod tests {
     #[test]
     fn migrating_existing_case_requires_backup_first() {
         let dir = tempfile::tempdir().unwrap();
-        let (_database, connection) = fresh_case(dir.path());
+        let connection = fresh_database(dir.path());
         create_schema(&connection).unwrap();
         // A future migration would need a validated backup; passing `None`
         // for a non-empty case is rejected instead of silently proceeding.

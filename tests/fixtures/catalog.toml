@@ -8,3 +8,11 @@
 #
 # Entries are added by the tasks that need them (P1+), never speculatively.
 # The empty catalog is valid; a corrupted entry is not.
+
+# P2.1 traversal edge definitions. The tree is generated deterministically by
+# the capture tests; only the definition is tracked (plan Section 15).
+[[fixture]]
+name = "path-edges"
+path = "path-edges/README.md"
+license = "Apache-2.0 OR MIT"
+sha256 = "0c49a59178f40ed7104c392074ed8fbfdc8be40efc95bf7a8231fa78552a9aa9"

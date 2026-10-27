@@ -3,8 +3,8 @@
 //! leaves the original schema and data recoverable.
 
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
+use ghosttrace_core::storage::backup;
 use ghosttrace_core::storage::migrate::{self, MIGRATIONS, Migration};
-use ghosttrace_core::storage::{CaseLayout, backup};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -45,12 +45,8 @@ fn upgrade_backup_retains_committed_wal_data() {
         "0002_test_note",
         "CREATE TABLE note (id INTEGER PRIMARY KEY, body TEXT);",
     );
-    let outcome = migrate::apply_with(
-        &connection,
-        &[MIGRATIONS[0].clone(), add_note],
-        Some(&backup_dir),
-    )
-    .unwrap();
+    let outcome =
+        migrate::apply_with(&connection, &[MIGRATIONS[0], add_note], Some(&backup_dir)).unwrap();
 
     let artifact = outcome
         .backup
@@ -104,11 +100,7 @@ fn backup_failure_prevents_migration() {
         "0002_test_note",
         "CREATE TABLE note (id INTEGER PRIMARY KEY, body TEXT);",
     );
-    let outcome = migrate::apply_with(
-        &connection,
-        &[MIGRATIONS[0].clone(), add_note],
-        Some(&blocker),
-    );
+    let outcome = migrate::apply_with(&connection, &[MIGRATIONS[0], add_note], Some(&blocker));
     assert!(outcome.is_err(), "a failed backup must abort the migration");
 
     // The original schema and data are untouched.
@@ -146,11 +138,7 @@ fn failed_migration_leaves_the_original_recoverable() {
         "0002_broken",
         "CREATE TABLE note (id INTEGER PRIMARY KEY",
     ); // unterminated
-    let outcome = migrate::apply_with(
-        &connection,
-        &[MIGRATIONS[0].clone(), broken],
-        Some(&backup_dir),
-    );
+    let outcome = migrate::apply_with(&connection, &[MIGRATIONS[0], broken], Some(&backup_dir));
     assert!(outcome.is_err());
 
     // The seeded case row survives the failed migration.

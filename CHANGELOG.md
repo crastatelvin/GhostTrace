@@ -38,3 +38,12 @@ file records implemented capability only.
   `EventPage` with an explicit unresolved view, job checkpoints with
   previously-running-job recovery detection, and startup SQLite diagnostics
   (`docs/storage.md`).
+- P2.1 (2026-10-27): capture scope and the coverage ledger — validated
+  `CaptureSpec` (case-store overlap, duplicate roots, symlink-follow and
+  no-root rejection with stable codes), Unix no-follow traversal preserving
+  byte-exact native relative paths, unix device/inode identity with hardlink
+  aliasing, directory-loop identity guard, depth/entry/size caps disclosed in
+  the ledger, FIFO/socket/device exclusion, permission-denied and vanished
+  categories, bounded diagnostics, the ordinary-user permission test that
+  self-skips under root, and the tracked `path-edges` fixture definition
+  (`docs/architecture.md` capture section).

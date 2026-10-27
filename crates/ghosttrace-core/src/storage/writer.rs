@@ -425,10 +425,10 @@ impl CaseWriter {
 impl Drop for CaseWriter {
     fn drop(&mut self) {
         let _ = self.shutdown();
-        if let Ok(mut thread) = self.thread.lock() {
-            if let Some(handle) = thread.take() {
-                let _ = handle.join();
-            }
+        if let Ok(mut thread) = self.thread.lock()
+            && let Some(handle) = thread.take()
+        {
+            let _ = handle.join();
         }
         release_writer(&self.database_path);
     }
