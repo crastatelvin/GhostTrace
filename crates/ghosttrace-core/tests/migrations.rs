@@ -98,7 +98,7 @@ fn session_open_reports_diagnostics_and_migration_state() {
     }
     drop(session);
 
-    let (reopened, report) =
+    let (_reopened, report) =
         CaseSession::open(dir.path().join("investigation.ghosttrace-case")).unwrap();
     assert!(report.diagnostics.wal_enabled);
     assert!(!report.diagnostics.linked_sqlite_version.is_empty());
