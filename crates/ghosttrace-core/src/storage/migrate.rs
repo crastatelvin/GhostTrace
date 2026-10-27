@@ -20,7 +20,7 @@ use super::backup::{self, BackupArtifact};
 
 /// The current schema this application implements. `user_version` mirrors the
 /// applied set; both are checked at startup.
-pub const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+pub const SUPPORTED_SCHEMA_VERSION: u32 = 2;
 
 /// One migration step. `sql` is included from file so the checksum matches
 /// exactly what runs.
@@ -42,12 +42,19 @@ impl Migration {
     }
 }
 
-/// 0001_case.sql — the base schema (plan Section 5).
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "0001_case",
-    sql: include_str!("../../migrations/0001_case.sql"),
-}];
+/// Embedded migrations in ascending order (plan Sections 5, 8).
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "0001_case",
+        sql: include_str!("../../migrations/0001_case.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "0002_file_times",
+        sql: include_str!("../../migrations/0002_file_times.sql"),
+    },
+];
 
 /// What an open actually did, for diagnostics and honest reporting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,8 +281,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let connection = fresh_database(dir.path());
         let outcome = create_schema(&connection).unwrap();
-        assert_eq!(outcome.applied.len(), 1);
+        assert_eq!(outcome.applied.len(), MIGRATIONS.len());
         assert_eq!(outcome.applied[0].name, "0001_case");
+        assert_eq!(outcome.applied[1].name, "0002_file_times");
         assert!(outcome.backup.is_none(), "fresh cases need no backup");
         assert_eq!(outcome.schema_version, SUPPORTED_SCHEMA_VERSION);
         // Checksum equals the digest of the exact SQL.

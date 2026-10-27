@@ -1470,6 +1470,7 @@ dependencies = [
 name = "ghosttrace-cli"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "clap",
  "ghosttrace-core",
  "nix",

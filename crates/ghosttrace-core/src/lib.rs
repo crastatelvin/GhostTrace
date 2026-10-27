@@ -10,7 +10,9 @@
 //! - [`sqlite_report`] — linked-runtime verification (P0.1)
 //! - [`jobs`] — job states, checkpoints, and recovery detection (P1.2)
 //! - [`integrity`] — streaming SHA-256 and the acquisition manifest (P2.2)
+//! - [`analysis`] — timeline/snapshot analysis over captured evidence (P3.1)
 
+pub mod analysis;
 pub mod capture;
 pub mod domain;
 pub mod error;

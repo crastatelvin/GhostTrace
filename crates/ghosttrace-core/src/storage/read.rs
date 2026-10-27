@@ -78,6 +78,18 @@ impl CaseReader {
             .map_err(|e| CoreError::Storage(format!("table probe {name}: {e}")))
     }
 
+    /// Newest chosen instant in the case, used as the anchor for relative
+    /// ranges such as `--last 24h`. `None` when the case has no resolved time.
+    pub fn latest_chosen_seconds(&self) -> CoreResult<Option<i64>> {
+        self.connection
+            .query_row(
+                "SELECT max(chosen_seconds) FROM events WHERE chosen_seconds IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| CoreError::Storage(format!("latest time: {e}")))
+    }
+
     /// Execute one timeline query. Both views use keyset pagination with the
     /// same total order (chosen time, then nanos, then event id); the
     /// unresolved view orders by event id alone because its times are unknown.
@@ -94,15 +106,23 @@ impl CaseReader {
                     "SELECT id, revision, kind, summary, host_claim, chosen_seconds, chosen_nanos, time_status
                      FROM events
                      WHERE revision = ?1 AND chosen_seconds IS NULL
-                       AND (?2 = 0 OR id > ?3)
+                       AND (?2 IS NULL OR kind = ?2)
+                       AND (?3 IS NULL OR host_claim = ?3)
+                       AND (?4 IS NULL OR EXISTS (
+                             SELECT 1 FROM parse_runs p
+                             WHERE p.id = events.parse_run_id AND p.parser_id = ?4))
+                       AND (?5 = 0 OR id > ?6)
                      ORDER BY id
-                     LIMIT ?4",
+                     LIMIT ?7",
                 )
                 .map_err(|e| CoreError::Storage(format!("prepare: {e}")))?;
             let mapped = statement
                 .query_map(
                     rusqlite::params![
                         query.revision,
+                        query.kind,
+                        query.host,
+                        query.source,
                         query.after.is_some() as i32,
                         query
                             .after
@@ -125,6 +145,9 @@ impl CaseReader {
                        AND (?3 IS NULL OR host_claim = ?3)
                        AND (?4 IS NULL OR chosen_seconds >= ?4)
                        AND (?5 IS NULL OR chosen_seconds < ?5)
+                       AND (?10 IS NULL OR EXISTS (
+                             SELECT 1 FROM parse_runs p
+                             WHERE p.id = events.parse_run_id AND p.parser_id = ?10))
                        AND (chosen_seconds > ?6
                             OR (chosen_seconds = ?6 AND (chosen_nanos > ?7
                                                         OR (chosen_nanos = ?7 AND id > ?8))))
@@ -149,6 +172,7 @@ impl CaseReader {
                         cursor.nanos,
                         cursor.event_id,
                         limit + 1,
+                        query.source,
                     ],
                     row_to_event,
                 )

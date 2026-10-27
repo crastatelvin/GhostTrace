@@ -797,11 +797,13 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P2 objects/metadata events and P1 pagination. **Produces:** `timeline`, `compare_acquisitions`, `DiffSummary` and paged classifications.
 
-- [ ] Test `--last 24h` case-latest anchor, explicit `--until`, unresolved-time view, kind/source/host filters, and stable repeated query pages.
-- [ ] Test same-size/same-mtime changed bytes, metadata-only change, equal digest, path appearance, hardlink/move candidate, different scope, and permission/cancel gaps.
-- [ ] Implement path/object/hash comparison with scope-first validation; missing evidence yields unknown results.
-- [ ] Document “no longer present in captured scope” and rename-candidate limits in output and help.
-- [ ] Commit: `feat: query timelines and compare snapshots with coverage semantics`.
+- [x] Test `--last 24h` case-latest anchor, explicit `--until`, unresolved-time view, kind/source/host filters, and stable repeated query pages.
+- [x] Test same-size/same-mtime changed bytes, metadata-only change, equal digest, path appearance, hardlink/move candidate, different scope, and permission/cancel gaps.
+- [x] Implement path/object/hash comparison with scope-first validation; missing evidence yields unknown results.
+- [x] Document “no longer present in captured scope” and rename-candidate limits in output and help.
+- [x] Commit: `feat: query timelines and compare snapshots with coverage semantics`.
+
+**Completion evidence (2026-10-27):** `cargo test -p ghosttrace-cli --test timeline_queries --test snapshot_diff --locked` → 11 tests pass (21 CLI tests total). Timeline: `--last 1h` anchors to the case-latest chosen instant and `after = anchor - 3600`; `--until` yields an exclusive bound; the unresolved view contains only unresolved events (never mixed into the ordered view); `--kind`/`--host`/`--source` are exact; keyset pages of 2 reconstruct the full ordered list with no skips or duplicates and repeat identically; invalid windows are exit 2. Diff: unchanged, `metadata_changed`, `content_changed_equal_metadata` (same size *and* mtime restored, different bytes), `content_changed`, `appeared`, `not_present_in_captured_scope` (reason says deletion not established), and both sides of a rename as `move_candidate` (reason says move not proven). A later capture with all files excluded yields `unknown` with a coverage-gap reason instead of absence; different roots yield `scope_compatible: false` and all rows `unknown`. Diff paging is stable. Added migration `0002_file_times` (additive mtime columns, existing rows stay NULL) so metadata comparisons rest on recorded facts; backup/migration tests updated to schema 2.`docs/cli.md` documents the classes, scope rules, and candidate limits, and `diff --help` states them at the point of use.
 
 #### P3.2 — Verification and static JSON/HTML reports
 
@@ -1104,7 +1106,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P2 | P2.1 | Safe traversal and coverage | [x] |
 | P2 | P2.2 | Copy/hash/checkpoint/recovery | [x] |
 | P2 | P2.3 | Scan/case CLI | [x] |
-| P3 | P3.1 | Timeline and scoped diff | [ ] |
+| P3 | P3.1 | Timeline and scoped diff | [x] |
 | P3 | P3.2 | Verification and safe alpha reports | [ ] |
 | P4 | P4.1 | JSONL/syslog adapter contract | [ ] |
 | P4 | P4.2 | Binary-safe journal export | [ ] |

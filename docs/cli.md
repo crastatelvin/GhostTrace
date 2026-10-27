@@ -97,6 +97,72 @@ auto-completed. `recovery.orphan_objects` counts published objects without a
 database reference (a crash between rename and commit). The CLI reports them;
 it never deletes evidence.
 
+## `timeline`
+
+```bash
+ghosttrace timeline --case <CASE> [--last 24h] [--until 2026-10-27T12:00:00Z] \
+  [--kind file.observed] [--host HOST] [--source capture.metadata.v1] \
+  [--unresolved] [--revision r1] [--limit 200] [--cursor SECONDS:NANOS:EVENT_ID]
+```
+
+- `--last` anchors to the **newest chosen instant in the case** (or to
+  `--until` when both are given) and subtracts the window. It is never
+  "now": a case captured last month still answers `--last 24h` about its own
+  last day.
+- `--until` is an exclusive RFC 3339 upper bound.
+- The resolved view and the unresolved view are separate. Events with no
+  resolved time never appear in the ordered timeline; `--unresolved` lists
+  them explicitly.
+- `--kind`, `--host`, and `--source` (`parse_runs.parser_id`) are exact
+  filters.
+- Paging is keyset-based: pass `next_cursor` back as `--cursor`. Repeating a
+  query returns the identical page; no skips, no duplicates.
+
+```json
+{"revision":"r1","resolved_view":true,"after_seconds":1792999200,
+ "before_seconds":null,"anchor_seconds":1793085600,
+ "rows":[{"event_id":"evt-…","kind":"file.observed","chosen_seconds":1793085186,
+          "chosen_nanos":0,"time_status":"resolved","host_claim":null}],
+ "next_cursor":null}
+```
+
+## `diff`
+
+```bash
+ghosttrace diff --case <CASE> --before <ACQ> --after <ACQ> [--limit 200] [--cursor PATH]
+```
+
+Compares two acquisitions of the same roots by recorded full hash, size, and
+source mtime. Classes:
+
+| Class | Meaning |
+|---|---|
+| `unchanged` | Same full hash and same recorded size/mtime |
+| `metadata_changed` | Same full hash, different recorded metadata |
+| `content_changed_equal_metadata` | Different hash while size **and** mtime match |
+| `content_changed` | Different hash and different metadata |
+| `appeared` | Present only in the later captured scope |
+| `not_present_in_captured_scope` | Present in the earlier capture, absent later — **not** "deleted" |
+| `move_candidate` | Same full hash at a different path; bytes do not prove a copy or move |
+| `unknown` | Scope mismatch, coverage gap, or missing digest |
+
+Scope comes first:
+
+- Acquisitions whose **root sets differ** are not compared. Every row is
+  `unknown` with a warning; nothing is reported as appeared or absent.
+- If the later acquisition has a coverage gap at a path (permission denied,
+  unstable, oversized, cancelled, …), absence there is `unknown`, not
+  `not_present_in_captured_scope`.
+- Equal bytes across paths are a **candidate** relation only. GhostTrace does
+  not infer that an operator copied, moved, or hardlinked anything.
+- Timestamp equality never proves unchanged bytes, and unchanged bytes never
+  prove an untouched file: `content_changed_equal_metadata` exists precisely
+  because mtimes can be preserved deliberately.
+
+The response is `{"before_acquisition","after_acquisition","summary","rows",
+"next_cursor"}`; `summary` counts every class plus `same_content_relations`
+(paths sharing one full hash inside a snapshot) and `scope_compatible`.
+
 ## Reading the scan result
 
 ```json

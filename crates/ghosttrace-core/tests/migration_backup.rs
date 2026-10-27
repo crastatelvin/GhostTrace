@@ -41,23 +41,28 @@ fn upgrade_backup_retains_committed_wal_data() {
 
     let connection = Connection::open(&database).unwrap();
     let add_note = custom(
-        2,
-        "0002_test_note",
+        3,
+        "0003_test_note",
         "CREATE TABLE note (id INTEGER PRIMARY KEY, body TEXT);",
     );
-    let outcome =
-        migrate::apply_with(&connection, &[MIGRATIONS[0], add_note], Some(&backup_dir)).unwrap();
+    let outcome = migrate::apply_with(
+        &connection,
+        &[MIGRATIONS[0], MIGRATIONS[1], add_note],
+        Some(&backup_dir),
+    )
+    .unwrap();
 
     let artifact = outcome
         .backup
         .expect("an existing case must be backed up first");
     assert!(artifact.integrity_ok, "the backup must verify");
     assert_eq!(
-        artifact.schema_version, 1,
+        artifact.schema_version, 2,
         "backup captured the pre-upgrade schema"
     );
-    assert_eq!(artifact.applied_migrations.len(), 1);
+    assert_eq!(artifact.applied_migrations.len(), 2);
     assert_eq!(artifact.applied_migrations[0].1, "0001_case");
+    assert_eq!(artifact.applied_migrations[1].1, "0002_file_times");
 
     // The upgraded database now has the new table...
     let table: i64 = connection
@@ -72,7 +77,9 @@ fn upgrade_backup_retains_committed_wal_data() {
     // ...while the backup holds the committed WAL data as it was before.
     let verification = backup::validate_backup(&artifact.path).unwrap();
     assert!(verification.integrity_ok);
+    assert_eq!(verification.applied_migrations.len(), 2);
     assert_eq!(verification.applied_migrations[0].1, "0001_case");
+    assert_eq!(verification.applied_migrations[1].1, "0002_file_times");
     let backup_connection =
         Connection::open_with_flags(&artifact.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .unwrap();
@@ -96,11 +103,15 @@ fn backup_failure_prevents_migration() {
 
     let connection = Connection::open(&database).unwrap();
     let add_note = custom(
-        2,
-        "0002_test_note",
+        3,
+        "0003_test_note",
         "CREATE TABLE note (id INTEGER PRIMARY KEY, body TEXT);",
     );
-    let outcome = migrate::apply_with(&connection, &[MIGRATIONS[0], add_note], Some(&blocker));
+    let outcome = migrate::apply_with(
+        &connection,
+        &[MIGRATIONS[0], MIGRATIONS[1], add_note],
+        Some(&blocker),
+    );
     assert!(outcome.is_err(), "a failed backup must abort the migration");
 
     // The original schema and data are untouched.
@@ -121,7 +132,7 @@ fn backup_failure_prevents_migration() {
     let version: u32 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, 2);
 }
 
 #[test]
@@ -134,11 +145,15 @@ fn failed_migration_leaves_the_original_recoverable() {
 
     let connection = Connection::open(&database).unwrap();
     let broken = custom(
-        2,
-        "0002_broken",
+        3,
+        "0003_broken",
         "CREATE TABLE note (id INTEGER PRIMARY KEY",
     ); // unterminated
-    let outcome = migrate::apply_with(&connection, &[MIGRATIONS[0], broken], Some(&backup_dir));
+    let outcome = migrate::apply_with(
+        &connection,
+        &[MIGRATIONS[0], MIGRATIONS[1], broken],
+        Some(&backup_dir),
+    );
     assert!(outcome.is_err());
 
     // The seeded case row survives the failed migration.
@@ -151,7 +166,7 @@ fn failed_migration_leaves_the_original_recoverable() {
     let version: u32 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 1, "the failed migration did not bump the schema");
+    assert_eq!(version, 2, "the failed migration did not bump the schema");
     // The pre-migration backup validates and can be restored.
     let backups: Vec<_> = std::fs::read_dir(&backup_dir)
         .unwrap()
@@ -162,5 +177,7 @@ fn failed_migration_leaves_the_original_recoverable() {
     assert_eq!(backups.len(), 1, "a validated backup exists for recovery");
     let verification = backup::validate_backup(&backups[0]).unwrap();
     assert!(verification.integrity_ok);
+    assert_eq!(verification.applied_migrations.len(), 2);
     assert_eq!(verification.applied_migrations[0].1, "0001_case");
+    assert_eq!(verification.applied_migrations[1].1, "0002_file_times");
 }

@@ -24,3 +24,11 @@ name = "small-case"
 path = "small-case/README.md"
 license = "Apache-2.0 OR MIT"
 sha256 = "6e5b6e7895abaf64bfcdf52ef42def73a29570587061fbe66c9e7d2d37a2462d"
+
+# P3.1 snapshot-diff pair definitions; trees generated deterministically by
+# the CLI diff tests.
+[[fixture]]
+name = "snapshot-pairs"
+path = "snapshot-pairs/README.md"
+license = "Apache-2.0 OR MIT"
+sha256 = "0b3f472dcb4ee6acc01beeeb90733f231008cca21eef93494c7d4e79a9e94fd7"

@@ -197,6 +197,9 @@ pub struct CopyOutcome {
     pub hardlink_alias: bool,
     /// Identity observed during traversal, scoped to this acquisition.
     pub object_identity: Option<String>,
+    /// Source modification time (Unix seconds + nanos), when observable.
+    pub modified_seconds: Option<i64>,
+    pub modified_nanos: Option<u32>,
     pub detail: Option<&'static str>,
 }
 
@@ -212,6 +215,8 @@ impl CopyOutcome {
             store_subpath: None,
             hardlink_alias: task.hardlink_alias,
             object_identity: task.expected_identity.clone(),
+            modified_seconds: None,
+            modified_nanos: None,
             detail,
         }
     }
@@ -402,6 +407,7 @@ pub fn copy_one(
 
     // Source replacement and in-place modification are both detectable:
     // the descriptor stamp catches the latter, the path stamp the former.
+    let (modified_seconds, modified_nanos) = unix_parts(before.modified);
     let after = stamp_of(&source)?;
     let path_now = match stamp_of_path(&task.source) {
         Ok(stamp) => stamp,
@@ -423,7 +429,17 @@ pub fn copy_one(
         ));
     }
 
-    publish(task, &staging, digest, layout, progress)
+    let mut outcome = publish(task, &staging, digest, layout, progress)?;
+    outcome.modified_seconds = modified_seconds;
+    outcome.modified_nanos = modified_nanos;
+    Ok(outcome)
+}
+
+fn unix_parts(time: Option<std::time::SystemTime>) -> (Option<i64>, Option<u32>) {
+    match time.and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()) {
+        Some(elapsed) => (Some(elapsed.as_secs() as i64), Some(elapsed.subsec_nanos())),
+        None => (None, None),
+    }
 }
 
 fn publish(
@@ -751,6 +767,8 @@ pub fn run_acquisition(
                         "link_target_kind",
                         "observed_seconds",
                         "observed_nanos",
+                        "source_mtime_seconds",
+                        "source_mtime_nanos",
                     ],
                     vec![
                         Param::Text(format!("obs-{}", Uuid::new_v4())),
@@ -762,6 +780,8 @@ pub fn run_acquisition(
                         Param::OptText(None),
                         Param::Int(observed_at),
                         Param::Int(0),
+                        Param::OptInt(copy.modified_seconds),
+                        Param::OptInt(copy.modified_nanos.map(i64::from)),
                     ],
                 ));
             objects.push(manifest_object(

@@ -36,6 +36,8 @@ cargo build --workspace --locked
 ./target/debug/ghosttrace case create --case /cases/demo.ghosttrace-case --label demo
 ./target/debug/ghosttrace scan --case /cases/demo.ghosttrace-case --source /evidence/export
 ./target/debug/ghosttrace status --case /cases/demo.ghosttrace-case
+./target/debug/ghosttrace timeline --case /cases/demo.ghosttrace-case --last 24h
+./target/debug/ghosttrace diff --case /cases/demo.ghosttrace-case --before <ACQ> --after <ACQ>
 ```
 
 `scan` copies and hashes every file it can access, records each omission with a

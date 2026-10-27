@@ -13,6 +13,8 @@ pub struct EventQuery {
     pub revision: String,
     pub kind: Option<String>,
     pub host: Option<String>,
+    /// Parser/adapter identity that produced the event (`parse_runs.parser_id`).
+    pub source: Option<String>,
     /// Inclusive lower bound on chosen time (Unix seconds).
     pub after_seconds: Option<i64>,
     /// Exclusive upper bound on chosen time (Unix seconds).

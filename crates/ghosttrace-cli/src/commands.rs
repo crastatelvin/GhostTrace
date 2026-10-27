@@ -12,12 +12,14 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+use ghosttrace_core::analysis::diff::{DiffQuery, DiffReport, compare_acquisitions};
 use ghosttrace_core::capture::copy::{
     AcquisitionOptions, CopyProgress, inspect_recovery, run_acquisition,
 };
 use ghosttrace_core::capture::{CaptureRoot, CaptureSpec};
 use ghosttrace_core::domain::case::AcquisitionMethod;
 use ghosttrace_core::domain::path::NativePath;
+use ghosttrace_core::domain::query::{EventQuery, EventRow, TimeCursor};
 use ghosttrace_core::error::CoreError;
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
 use ghosttrace_core::storage::CASE_DIR_SUFFIX;
@@ -49,6 +51,22 @@ pub enum Cli {
     Scan(ScanArgs),
     /// Report stored acquisitions, coverage, and recovery leftovers.
     Status(StatusArgs),
+    /// Query the event timeline with bounded filters and keyset paging.
+    #[command(
+        long_about = "Query the event timeline with bounded filters and keyset paging.\
+\n\nThe resolved view orders by chosen time; events without a resolved time are\
+ never mixed in and remain reachable with --unresolved. --last anchors to the\
+ newest instant in the case unless --until supplies an explicit upper bound."
+    )]
+    Timeline(TimelineArgs),
+    /// Compare two acquisitions of the same roots.
+    #[command(long_about = "Compare two acquisitions of the same roots.\
+\n\nAbsence in the later capture means \"not present in the captured scope\",\
+ never \"deleted\". A coverage gap at that path makes the result unknown.\
+ Equal full hashes at different paths are move candidates: bytes alone never\
+ prove a copy or move. Acquisitions with different roots are reported unknown.\
+ Timestamp equality never proves unchanged bytes.")]
+    Diff(DiffArgs),
 }
 
 #[derive(Subcommand)]
@@ -102,6 +120,57 @@ pub struct ScanArgs {
 pub enum MethodArg {
     ProtectedCopy,
     LiveBestEffort,
+}
+
+#[derive(Args)]
+pub struct TimelineArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Relative window ending at the case-latest event, e.g. `24h`, `90m`, `7d`.
+    #[arg(long)]
+    pub last: Option<String>,
+    /// Explicit exclusive upper bound (RFC 3339).
+    #[arg(long)]
+    pub until: Option<String>,
+    /// Exact event kind filter (e.g. `file.observed`).
+    #[arg(long)]
+    pub kind: Option<String>,
+    /// Exact host-claim filter.
+    #[arg(long)]
+    pub host: Option<String>,
+    /// Exact parser/adapter identity filter (`parse_runs.parser_id`).
+    #[arg(long)]
+    pub source: Option<String>,
+    /// The explicit unresolved-time view.
+    #[arg(long)]
+    pub unresolved: bool,
+    /// Revision to read (capture metadata events use `r1`).
+    #[arg(long, default_value = "r1")]
+    pub revision: String,
+    #[arg(long, default_value_t = EventQuery::DEFAULT_LIMIT)]
+    pub limit: u32,
+    /// Opaque cursor from a previous page (`seconds:nanos:event_id`).
+    #[arg(long)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct DiffArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Earlier acquisition ID.
+    #[arg(long)]
+    pub before: String,
+    /// Later acquisition ID.
+    #[arg(long)]
+    pub after: String,
+    #[arg(long, default_value_t = DiffQuery::DEFAULT_LIMIT)]
+    pub limit: u32,
+    /// Opaque path cursor from a previous page.
+    #[arg(long)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Args)]
@@ -174,6 +243,17 @@ struct RecoveryRow {
 }
 
 #[derive(Serialize)]
+struct TimelineOutput {
+    revision: String,
+    resolved_view: bool,
+    after_seconds: Option<i64>,
+    before_seconds: Option<i64>,
+    anchor_seconds: Option<i64>,
+    rows: Vec<EventRow>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
 struct StatusOutput {
     case_id: String,
     display_timezone: String,
@@ -195,6 +275,8 @@ pub fn run(cli: Cli) -> u8 {
         } => case_create(args),
         Cli::Scan(args) => scan(args),
         Cli::Status(args) => status(args),
+        Cli::Timeline(args) => timeline(args),
+        Cli::Diff(args) => diff(args),
     }
 }
 
@@ -447,6 +529,171 @@ fn status(args: StatusArgs) -> u8 {
         recovery,
     });
     EXIT_OK
+}
+
+fn timeline(args: TimelineArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    let reader = match session.reader() {
+        Ok(reader) => reader,
+        Err(error) => return fail(&error),
+    };
+    let before_seconds = match args.until.as_deref().map(parse_instant) {
+        Some(Ok(seconds)) => Some(seconds),
+        Some(Err(message)) => {
+            output::emit_error("invalid_usage", &message);
+            return EXIT_USAGE;
+        }
+        None => None,
+    };
+    let window = match args.last.as_deref().map(parse_window) {
+        Some(Ok(seconds)) => Some(seconds),
+        Some(Err(message)) => {
+            output::emit_error("invalid_usage", &message);
+            return EXIT_USAGE;
+        }
+        None => None,
+    };
+    let anchor_seconds = if window.is_some() || before_seconds.is_some() {
+        match before_seconds.map_or_else(
+            || reader.latest_chosen_seconds(),
+            |seconds| Ok(Some(seconds)),
+        ) {
+            Ok(anchor) => anchor,
+            Err(error) => return fail(&error),
+        }
+    } else {
+        None
+    };
+    let after_seconds = match (window, anchor_seconds) {
+        (Some(window), Some(anchor)) => Some(anchor.saturating_sub(window)),
+        _ => None,
+    };
+    let cursor = match args.cursor.as_deref().map(parse_cursor) {
+        Some(Ok(cursor)) => Some(cursor),
+        Some(Err(message)) => {
+            output::emit_error("invalid_usage", &message);
+            return EXIT_USAGE;
+        }
+        None => None,
+    };
+    let query = EventQuery {
+        revision: args.revision.clone(),
+        kind: args.kind,
+        host: args.host,
+        source: args.source,
+        after_seconds,
+        before_seconds,
+        unresolved_only: args.unresolved,
+        limit: args.limit,
+        after: cursor,
+    };
+    let page = match reader.query_events(&session.config().display_timezone, &query) {
+        Ok(page) => page,
+        Err(error) => return fail(&error),
+    };
+    output::emit_json(&TimelineOutput {
+        revision: args.revision,
+        resolved_view: !args.unresolved,
+        after_seconds,
+        before_seconds,
+        anchor_seconds,
+        rows: page.rows,
+        next_cursor: page.next_cursor.map(format_cursor),
+    });
+    EXIT_OK
+}
+
+fn diff(args: DiffArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    let reader = match session.reader() {
+        Ok(reader) => reader,
+        Err(error) => return fail(&error),
+    };
+    let query = DiffQuery {
+        after: args.cursor,
+        limit: args.limit,
+    };
+    let report: DiffReport = match compare_acquisitions(&reader, &args.before, &args.after, &query)
+    {
+        Ok(report) => report,
+        Err(error) => return fail(&error),
+    };
+    output::emit_json(&report);
+    eprintln!(
+        "diff {} -> {}: {} unchanged, {} changed, {} appeared, {} not present, {} unknown",
+        report.before_acquisition,
+        report.after_acquisition,
+        report.summary.unchanged,
+        report.summary.content_changed
+            + report.summary.content_changed_equal_metadata
+            + report.summary.metadata_changed,
+        report.summary.appeared,
+        report.summary.not_present_in_captured_scope,
+        report.summary.unknown
+    );
+    EXIT_OK
+}
+
+fn parse_window(text: &str) -> Result<i64, String> {
+    let (digits, unit) = text.split_at(text.len().saturating_sub(1));
+    let value: i64 = digits
+        .parse()
+        .map_err(|_| format!("invalid window `{text}`; use e.g. 24h, 90m, 7d"))?;
+    let multiplier = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        _ => {
+            return Err(format!(
+                "invalid window unit in `{text}`; use s, m, h, or d"
+            ));
+        }
+    };
+    if value <= 0 {
+        return Err(format!("invalid window `{text}`; must be positive"));
+    }
+    value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("window `{text}` is too large"))
+}
+
+fn parse_instant(text: &str) -> Result<i64, String> {
+    chrono::DateTime::parse_from_rfc3339(text)
+        .map(|instant| instant.timestamp())
+        .map_err(|_| {
+            format!("invalid instant `{text}`; expected RFC 3339, e.g. 2026-10-27T12:00:00Z")
+        })
+}
+
+fn parse_cursor(text: &str) -> Result<TimeCursor, String> {
+    let mut parts = text.splitn(3, ':');
+    let seconds = parts
+        .next()
+        .and_then(|part| part.parse().ok())
+        .ok_or_else(|| format!("invalid cursor `{text}`; expected seconds:nanos:event_id"))?;
+    let nanos = parts
+        .next()
+        .and_then(|part| part.parse().ok())
+        .ok_or_else(|| format!("invalid cursor `{text}`; expected seconds:nanos:event_id"))?;
+    let event_id = parts
+        .next()
+        .ok_or_else(|| format!("invalid cursor `{text}`; expected seconds:nanos:event_id"))?;
+    Ok(TimeCursor {
+        seconds,
+        nanos,
+        event_id: event_id.to_string(),
+    })
+}
+
+fn format_cursor(cursor: TimeCursor) -> String {
+    format!("{}:{}:{}", cursor.seconds, cursor.nanos, cursor.event_id)
 }
 
 fn fail(error: &CoreError) -> u8 {

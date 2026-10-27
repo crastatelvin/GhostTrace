@@ -64,3 +64,11 @@ file records implemented capability only.
   terminal-safe encoded native paths, protected-copy vs live-best-effort
   disclosure at the point of choice, and access-time effects stated
   (`docs/cli.md`, README alpha workflow).
+- P3.1 (2026-10-27): timeline and snapshot diff — `ghosttrace timeline` with
+  case-latest `--last` anchoring, explicit `--until`, a separate unresolved
+  view, exact kind/host/source filters, and keyset pages; `ghosttrace diff`
+  comparing recorded hash/size/mtime with scope-first validation,
+  coverage-gap awareness, and `move_candidate` rather than rename claims.
+  Migration `0002_file_times` adds nullable source mtime columns so metadata
+  comparisons rest on captured facts. Documented class semantics and limits
+  (`docs/cli.md`, `diff --help`).
