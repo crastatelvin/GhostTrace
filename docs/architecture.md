@@ -12,7 +12,7 @@ Source (protected copy / acknowledged live source)
   → Capture      spec validation, no-follow traversal, coverage ledger (P2.1)
   → Copy/Hash    staging, streaming SHA-256, atomic publish (P2.2, below)
   → Case storage fixed SQLite schema, one writer, checksummed migrations (P1.2)
-  → Parsers      bounded workers, raw observations, journal/EVTX/browser adapters (P4/P8)
+  → Ingest       bounded adapters, raw observations, versioned parse runs (P4.1, below)
   → Service      shared query contract for desktop, TUI, CLI (P1.2+)
   → Analysis     versioned revisions, rules, reversible review (P5)
   → Reports      versioned JSON/HTML export, manifest verification (P3.2, below)
@@ -185,3 +185,31 @@ run never leaves something that looks like a finished export.
 binary with licences, docs, `--help` output, sample data, and a `build-info.json`
 inventory (target triple, rustc, commit, per-file SHA-256), then writes the
 archive digest. It does not build, sign, or upload anything.
+
+## Ingest section (P4.1)
+
+`ingest::run_import` reads only the stored copy of a captured object. It
+re-hashes that copy against the recorded SHA-256 before creating a run, so a
+tampered object produces `integrity_mismatch` instead of plausible events.
+
+The adapter is chosen by a bounded signature prefix (`{`/`[` for JSONL, `<PRI>1 `
+for RFC 5424, other `<PRI>` for RFC 3164) unless the operator declares one. Both
+the detected and the declared format are reported, and `parse_runs.parser_id`
+records which adapter actually ran. The run id is deterministic over evidence
+identity, adapter id/version, and a digest of the effective bounded
+configuration, so replays are no-ops while any mapping change creates a new
+revision.
+
+Records stream through a bounded reader: a record never buffered past the byte
+limit is consumed to its newline and reported (`record_too_large`); invalid
+UTF-8, malformed JSON/syslog headers, wrong mapped field types, and unparseable
+times become stable diagnostics rather than silent drops. Batches commit every
+500 records; cancellation is checked between records and recorded as a
+`cancelled` run.
+
+Every parsed record is stored as a raw observation with a byte-range locator and
+its original fields. Events are emitted only for (a) valid JSONL objects under
+the fixed mapping and (b) the three tested sshd/sudo message patterns. RFC 3164
+year and zone are never inferred: absent operator declarations leave times
+unresolved, DST overlaps carry both candidates, and a December→January sequence
+is ambiguous.

@@ -10,6 +10,7 @@ ghosttrace scan --case <DIR>.ghosttrace-case --source <PATH> [--source <PATH>...
 ghosttrace status --case <DIR>.ghosttrace-case
 ghosttrace timeline --case <DIR>.ghosttrace-case [filters]
 ghosttrace diff --case <DIR>.ghosttrace-case --before <ID> --after <ID>
+ghosttrace import --case <DIR>.ghosttrace-case --path <CAPTURED-PATH> [mapping]
 ghosttrace verify --case <DIR>.ghosttrace-case [--manifest <FILE>]
 ghosttrace report --case <DIR>.ghosttrace-case --output <DIR> [--report-id NAME]
 ghosttrace sqlite-info
@@ -231,3 +232,39 @@ cargo run -p xtask -- package --output dist --version 0.1.0-alpha.1
 The archive includes the binary, licences, docs, `help.txt`, sample data, and a
 `build-info.json` inventory, plus a sibling `.sha256`. Existing archives are
 never overwritten.
+
+## `import`
+
+Parses one **captured** object through a bounded, versioned adapter. The object
+is re-hashed against its recorded digest before parsing; a mismatch exits `1`
+and no run is recorded.
+
+```bash
+ghosttrace import --case <DIR>.ghosttrace-case --path logs/app.jsonl \
+  [--time-field ts] [--time-format rfc3339] [--message-field msg] \
+  [--host-field host] [--kind-field kind] [--default-kind log.record]
+
+ghosttrace import --case <DIR>.ghosttrace-case --path var/log/syslog \
+  --format syslog-3164 --timezone Europe/Berlin --year 2026
+```
+
+`--path` is the captured relative path; `--object <ID>` selects the evidence
+object directly. Exactly one is required. `--acquisition` selects a capture
+(default: latest). `--format` accepts `jsonl`, `syslog-5424`, or `syslog-3164`
+and overrides signature detection; both detected and declared formats are
+reported.
+
+Output: `{"run_id","acquisition_id","evidence_id","path","parser_id",
+"parser_version","detected_format","declared_format","state","records",
+"observations","events","diagnostics","diagnostics_total",
+"diagnostics_truncated"}`.
+
+Exit codes: `0` every record parsed cleanly, `3` diagnostics were recorded or
+the run was cancelled, `2` invalid configuration/signature (no run recorded),
+`1` import failed (including digest mismatch). Re-running the same object with
+the same configuration reuses the run id and adds no duplicate rows.
+
+Time rules and the exact accepted/rejected records are in
+[formats.md](formats.md). Unmatched messages stay raw observations; RFC 3164
+times stay unresolved without `--year`/`--timezone`; DST overlaps and
+December→January sequences stay `ambiguous`.

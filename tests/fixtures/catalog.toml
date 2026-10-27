@@ -32,3 +32,11 @@ name = "snapshot-pairs"
 path = "snapshot-pairs/README.md"
 license = "Apache-2.0 OR MIT"
 sha256 = "0b3f472dcb4ee6acc01beeeb90733f231008cca21eef93494c7d4e79a9e94fd7"
+
+# P4.1 log-format definitions. The adapter tests generate the JSONL and syslog
+# samples deterministically; only the expected-mapping definitions are tracked.
+[[fixture]]
+name = "log-formats"
+path = "log-formats/README.md"
+license = "Apache-2.0 OR MIT"
+sha256 = "50bad2fef14831f282272405f963adf0c61a812ee923bceb22677d34bdb247bd"

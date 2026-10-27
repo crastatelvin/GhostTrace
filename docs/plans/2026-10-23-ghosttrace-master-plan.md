@@ -831,10 +831,10 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Raw observation/event model and bounded writer batches. **Produces:** Detection/compatibility contract, versioned parse runs, raw locators, structured import diagnostics.
 
-- [ ] Test signature/schema detection, manual override recording, re-import idempotency, oversize record, invalid encoding, and cancelled parser state.
-- [ ] Define JSONL mapping fields and bounded config with no executable expressions; test accepted/rejected schema examples.
-- [ ] Test RFC5424 and selected RFC3164 headers, missing timezone/year, DST overlap, New Year rotation, malformed record, and supported auth outcome mappings.
-- [ ] Implement only tested syslog patterns; preserve unmatched messages as raw observations with no invented event type/time.
+- [x] Test signature/schema detection, manual override recording, re-import idempotency, oversize record, invalid encoding, and cancelled parser state.
+- [x] Define JSONL mapping fields and bounded config with no executable expressions; test accepted/rejected schema examples.
+- [x] Test RFC5424 and selected RFC3164 headers, missing timezone/year, DST overlap, New Year rotation, malformed record, and supported auth outcome mappings.
+- [x] Implement only tested syslog patterns; preserve unmatched messages as raw observations with no invented event type/time.
 - [ ] Commit: `feat: import structured logs with explicit time assumptions`.
 
 #### P4.2 — Binary-safe journal export
@@ -1110,7 +1110,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P2 | P2.3 | Scan/case CLI | [x] |
 | P3 | P3.1 | Timeline and scoped diff | [x] |
 | P3 | P3.2 | Verification and safe alpha reports | [x] |
-| P4 | P4.1 | JSONL/syslog adapter contract | [ ] |
+| P4 | P4.1 | JSONL/syslog adapter contract | [x] |
 | P4 | P4.2 | Binary-safe journal export | [ ] |
 | P4 | P4.3 | Browser history/WAL/schema support | [ ] |
 | P4 | P4.4 | FTS and time revisions | [ ] |

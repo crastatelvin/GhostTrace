@@ -21,6 +21,10 @@ use ghosttrace_core::domain::case::AcquisitionMethod;
 use ghosttrace_core::domain::path::NativePath;
 use ghosttrace_core::domain::query::{EventQuery, EventRow, TimeCursor};
 use ghosttrace_core::error::CoreError;
+use ghosttrace_core::ingest::{
+    self, DEFAULT_MAX_RECORD_BYTES, DEFAULT_MAX_RECORDS, ImportRequest, JsonlConfig, LogFormat,
+    SyslogConfig, TimeFormat,
+};
 use ghosttrace_core::integrity::manifest::ManifestV1;
 use ghosttrace_core::reports::{self, ReportContext, ReportSelection};
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
@@ -87,6 +91,18 @@ pub enum Cli {
  links, and no remote resources. Publication is atomic and never overwrites an\
  existing report directory.")]
     Report(ReportArgs),
+    /// Import a captured log object through a bounded, versioned adapter.
+    #[command(
+        long_about = "Import a captured log object through a bounded, versioned adapter.\
+\n\nThe adapter reads only the captured case object, detects the format from a\
+ bounded signature prefix unless --format declares one, records a versioned\
+ parse run with exact locators, and never invents an event type or a time.\
+ RFC 3164 has no year and no timezone: provide --year and --timezone, or the\
+ affected times stay unresolved. December→January sequences stay ambiguous.\
+\n\nExit 0 means every record was parsed cleanly, 3 means diagnostics were\
+ recorded (or the run was cancelled), and 1/2 mean the import did not run."
+    )]
+    Import(ImportArgs),
 }
 
 #[derive(Subcommand)]
@@ -226,6 +242,95 @@ pub struct ReportArgs {
 }
 
 #[derive(Args)]
+pub struct ImportArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Captured relative path, e.g. `logs/app.jsonl`.
+    #[arg(long)]
+    pub path: Option<String>,
+    /// Captured evidence object ID (instead of --path).
+    #[arg(long)]
+    pub object: Option<String>,
+    /// Acquisition to read (default: the latest).
+    #[arg(long)]
+    pub acquisition: Option<String>,
+    /// Declare the format instead of relying on signature detection.
+    #[arg(long, value_enum)]
+    pub format: Option<FormatArg>,
+    /// JSONL: field holding the record time.
+    #[arg(long, default_value = "ts")]
+    pub time_field: String,
+    /// JSONL: how that time field is encoded.
+    #[arg(long, value_enum, default_value_t = TimeFormatArg::Rfc3339)]
+    pub time_format: TimeFormatArg,
+    /// JSONL: field holding the human-readable summary.
+    #[arg(long)]
+    pub message_field: Option<String>,
+    /// JSONL: field holding the claimed host.
+    #[arg(long)]
+    pub host_field: Option<String>,
+    /// JSONL: field holding the event kind.
+    #[arg(long)]
+    pub kind_field: Option<String>,
+    /// JSONL: kind used when no kind field is mapped.
+    #[arg(long, default_value = "log.record")]
+    pub default_kind: String,
+    /// Syslog: IANA zone for RFC 3164 wall-clock headers.
+    #[arg(long)]
+    pub timezone: Option<String>,
+    /// Syslog: year for RFC 3164 headers (never inferred).
+    #[arg(long)]
+    pub year: Option<i32>,
+    /// Per-record byte bound; larger records are reported, not parsed.
+    #[arg(long, default_value_t = DEFAULT_MAX_RECORD_BYTES)]
+    pub max_record_bytes: usize,
+    /// Maximum records read from one object.
+    #[arg(long, default_value_t = DEFAULT_MAX_RECORDS)]
+    pub max_records: u64,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum FormatArg {
+    Jsonl,
+    #[value(name = "syslog-5424")]
+    Syslog5424,
+    #[value(name = "syslog-3164")]
+    Syslog3164,
+}
+
+impl FormatArg {
+    fn format(self) -> LogFormat {
+        match self {
+            FormatArg::Jsonl => LogFormat::Jsonl,
+            FormatArg::Syslog5424 => LogFormat::Syslog5424,
+            FormatArg::Syslog3164 => LogFormat::Syslog3164,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum TimeFormatArg {
+    Rfc3339,
+    UnixSeconds,
+    UnixMillis,
+    UnixMicros,
+    UnixNanos,
+}
+
+impl TimeFormatArg {
+    fn time_format(self) -> TimeFormat {
+        match self {
+            TimeFormatArg::Rfc3339 => TimeFormat::Rfc3339,
+            TimeFormatArg::UnixSeconds => TimeFormat::UnixSeconds,
+            TimeFormatArg::UnixMillis => TimeFormat::UnixMillis,
+            TimeFormatArg::UnixMicros => TimeFormat::UnixMicros,
+            TimeFormatArg::UnixNanos => TimeFormat::UnixNanos,
+        }
+    }
+}
+
+#[derive(Args)]
 pub struct StatusArgs {
     /// Existing case directory.
     #[arg(long)]
@@ -356,6 +461,90 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Diff(args) => diff(args),
         Cli::Verify(args) => verify(args),
         Cli::Report(args) => report(args),
+        Cli::Import(args) => import(args),
+    }
+}
+
+fn import(args: ImportArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    let reader = match session.reader() {
+        Ok(reader) => reader,
+        Err(error) => return fail(&error),
+    };
+    if args.path.is_some() == args.object.is_some() {
+        output::emit_error("invalid_request", "pass exactly one of --path or --object");
+        return EXIT_USAGE;
+    }
+    if !(1..=ingest::MAX_RECORD_BYTES_LIMIT).contains(&args.max_record_bytes) {
+        output::emit_error(
+            "invalid_request",
+            &format!(
+                "--max-record-bytes must be between 1 and {}",
+                ingest::MAX_RECORD_BYTES_LIMIT
+            ),
+        );
+        return EXIT_USAGE;
+    }
+    if args.max_records == 0 {
+        output::emit_error("invalid_request", "--max-records must be at least 1");
+        return EXIT_USAGE;
+    }
+    let request = ImportRequest {
+        path: args.path,
+        evidence_id: args.object,
+        acquisition_id: args.acquisition,
+        format: args.format.map(FormatArg::format),
+        jsonl: JsonlConfig {
+            time_field: args.time_field,
+            time_format: TimeFormatArg::time_format(args.time_format),
+            message_field: args.message_field,
+            host_field: args.host_field,
+            kind_field: args.kind_field,
+            default_kind: args.default_kind,
+        },
+        syslog: SyslogConfig {
+            timezone: args.timezone,
+            year: args.year,
+        },
+        max_record_bytes: args.max_record_bytes,
+        max_records: args.max_records,
+        cancelled: &INTERRUPTED,
+    };
+    install_interrupt_handler();
+    let outcome = ingest::run_import(&reader, session.writer(), session.layout().root(), &request);
+    INTERRUPTED.store(false, Ordering::SeqCst);
+    match outcome {
+        Ok(outcome) => {
+            if outcome.state == "partial" {
+                eprintln!(
+                    "import partial: {} diagnostics recorded (first at {})",
+                    outcome.diagnostics_total,
+                    outcome
+                        .diagnostics
+                        .first()
+                        .map(|diagnostic| diagnostic.code.as_str())
+                        .unwrap_or("unknown")
+                );
+            }
+            if outcome.state == "cancelled" {
+                eprintln!("import cancelled: the run is recorded as cancelled");
+            }
+            let code = if outcome.state == "completed" {
+                EXIT_OK
+            } else {
+                EXIT_PARTIAL
+            };
+            output::emit_json(&outcome);
+            code
+        }
+        Err(CoreError::InvalidInput(message)) | Err(CoreError::Unsupported(message)) => {
+            output::emit_error("invalid_request", &message);
+            EXIT_USAGE
+        }
+        Err(error) => fail(&error),
     }
 }
 

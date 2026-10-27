@@ -306,107 +306,211 @@ impl CaseWriter {
         event: &domain::event::Event,
         revision: &str,
     ) -> CoreResult<BatchResult> {
-        let primary = event.times.first();
-        let chosen: Option<domain::time::UnixTime> =
-            primary.and_then(|named| named.value.candidates.first().copied());
-        let status = match primary {
-            Some(named) => time_status_name(&named.value.status).to_string(),
-            None => "unresolved".to_string(),
-        };
-        let mut batch = WriteBatch::new().push(WriteOp::fact(
-            "events",
-            vec![
-                "id",
-                "revision",
-                "parse_run_id",
-                "kind",
-                "summary",
-                "host_claim",
-                "chosen_seconds",
-                "chosen_nanos",
-                "time_status",
-            ],
-            vec![
-                Param::Text(event.id.clone()),
-                Param::Text(revision.to_string()),
-                Param::Text(event.revision.clone()),
-                Param::Text(event.kind.clone()),
-                Param::Text(event.summary.clone()),
-                Param::OptText(event.host_claim.clone()),
-                Param::OptInt(chosen.map(|instant| instant.seconds)),
-                Param::Int(chosen.map_or(0, |instant| i64::from(instant.nanos))),
-                Param::Text(status),
-            ],
-        ));
-        for named in &event.times {
-            let time = &named.value;
-            let candidates_json = serde_json::to_string(&time.candidates)
-                .map_err(|e| CoreError::Storage(format!("serialize candidates: {e}")))?;
-            let assumptions_json = serde_json::to_string(&time.assumptions)
-                .map_err(|e| CoreError::Storage(format!("serialize assumptions: {e}")))?;
-            let raw = time.raw.as_ref();
-            let (raw_value_text, raw_text, epoch, unit, precision) = match raw {
-                Some(raw) => (
-                    raw.integer.map(|value| value.to_string()),
-                    raw.text.clone(),
-                    epoch_name(raw.epoch).to_string(),
-                    unit_name(raw.unit).to_string(),
-                    precision_name(raw.declared_precision).to_string(),
-                ),
-                None => (
-                    None,
-                    None,
-                    "unix".into(),
-                    "seconds".into(),
-                    "unknown".into(),
-                ),
-            };
+        self.execute(WriteBatch {
+            ops: event_ops(event, revision)?,
+        })
+    }
+
+    /// Create or update a parse run row (state, counts, diagnostics).
+    pub fn queue_parse_run(&self, run: &ParseRunRecord) -> CoreResult<BatchResult> {
+        self.execute(WriteBatch::new().push(parse_run_op(run)))
+    }
+
+    /// Commit one bounded import batch: the run row, raw observations, and
+    /// normalized events. Facts replay idempotently.
+    pub fn queue_import_batch(
+        &self,
+        run: &ParseRunRecord,
+        observations: &[ObservationRecord],
+        events: &[domain::event::Event],
+        revision: &str,
+    ) -> CoreResult<BatchResult> {
+        let mut batch = WriteBatch::new().push(parse_run_op(run));
+        for observation in observations {
             batch = batch.push(WriteOp::fact(
-                "event_times",
+                "raw_observations",
                 vec![
-                    "event_id",
-                    "name",
-                    "semantic",
-                    "status",
-                    "candidates_json",
-                    "raw_field",
-                    "raw_value_kind",
-                    "raw_value_text",
-                    "raw_text",
-                    "epoch",
-                    "unit",
-                    "declared_precision",
-                    "clock_domain",
-                    "assumptions_json",
+                    "id",
+                    "parse_run_id",
+                    "acquisition_id",
+                    "evidence_id",
+                    "locator_kind",
+                    "locator_identity",
+                    "raw_fields_json",
                 ],
                 vec![
-                    Param::Text(event.id.clone()),
-                    Param::Text(named.name.clone()),
-                    Param::Text(semantic_name(&time.semantic).to_string()),
-                    Param::Text(time_status_name(&time.status).to_string()),
-                    Param::Text(candidates_json),
-                    Param::OptText(raw.map(|raw| raw.field.clone())),
-                    Param::OptText(
-                        raw.and_then(|raw| match (raw.integer, &raw.text) {
-                            (Some(_), _) => Some("integer"),
-                            (None, Some(_)) => Some("text"),
-                            (None, None) => None,
-                        })
-                        .map(str::to_string),
-                    ),
-                    Param::OptText(raw_value_text),
-                    Param::OptText(raw_text),
-                    Param::Text(epoch),
-                    Param::Text(unit),
-                    Param::Text(precision),
-                    Param::Text(clock_domain_name(&time.clock_domain)),
-                    Param::Text(assumptions_json),
+                    Param::Text(observation.id.clone()),
+                    Param::Text(observation.parse_run_id.clone()),
+                    Param::Text(observation.acquisition_id.clone()),
+                    Param::Text(observation.evidence_id.clone()),
+                    Param::Text(observation.locator_kind.to_string()),
+                    Param::Text(observation.locator_identity.clone()),
+                    Param::Text(observation.raw_fields_json.clone()),
                 ],
             ));
         }
+        for event in events {
+            batch.ops.extend(event_ops(event, revision)?);
+        }
         self.execute(batch)
     }
+}
 
+/// A parse run as stored (plan Section 8: versioned, replayable runs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseRunRecord {
+    pub id: String,
+    pub acquisition_id: String,
+    pub parser_id: String,
+    pub parser_version: String,
+    pub config_digest: String,
+    pub state: String,
+    pub counts_json: String,
+    pub diagnostics_json: String,
+}
+
+/// One extracted record before interpretation, keyed by its exact locator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationRecord {
+    pub id: String,
+    pub parse_run_id: String,
+    pub acquisition_id: String,
+    pub evidence_id: String,
+    pub locator_kind: &'static str,
+    pub locator_identity: String,
+    pub raw_fields_json: String,
+}
+
+fn parse_run_op(run: &ParseRunRecord) -> WriteOp {
+    WriteOp::upsert(
+        "parse_runs",
+        vec![
+            "id",
+            "acquisition_id",
+            "parser_id",
+            "parser_version",
+            "config_digest",
+            "state",
+            "counts_json",
+            "diagnostics_json",
+        ],
+        vec![
+            Param::Text(run.id.clone()),
+            Param::Text(run.acquisition_id.clone()),
+            Param::Text(run.parser_id.clone()),
+            Param::Text(run.parser_version.clone()),
+            Param::Text(run.config_digest.clone()),
+            Param::Text(run.state.clone()),
+            Param::Text(run.counts_json.clone()),
+            Param::Text(run.diagnostics_json.clone()),
+        ],
+    )
+}
+
+/// Build the row operations for one event and its times.
+fn event_ops(event: &domain::event::Event, revision: &str) -> CoreResult<Vec<WriteOp>> {
+    let primary = event.times.first();
+    let chosen: Option<domain::time::UnixTime> =
+        primary.and_then(|named| named.value.candidates.first().copied());
+    let status = match primary {
+        Some(named) => time_status_name(&named.value.status).to_string(),
+        None => "unresolved".to_string(),
+    };
+    let mut ops = vec![WriteOp::fact(
+        "events",
+        vec![
+            "id",
+            "revision",
+            "parse_run_id",
+            "kind",
+            "summary",
+            "host_claim",
+            "chosen_seconds",
+            "chosen_nanos",
+            "time_status",
+        ],
+        vec![
+            Param::Text(event.id.clone()),
+            Param::Text(revision.to_string()),
+            Param::Text(event.revision.clone()),
+            Param::Text(event.kind.clone()),
+            Param::Text(event.summary.clone()),
+            Param::OptText(event.host_claim.clone()),
+            Param::OptInt(chosen.map(|instant| instant.seconds)),
+            Param::Int(chosen.map_or(0, |instant| i64::from(instant.nanos))),
+            Param::Text(status),
+        ],
+    )];
+    for named in &event.times {
+        let time = &named.value;
+        let candidates_json = serde_json::to_string(&time.candidates)
+            .map_err(|e| CoreError::Storage(format!("serialize candidates: {e}")))?;
+        let assumptions_json = serde_json::to_string(&time.assumptions)
+            .map_err(|e| CoreError::Storage(format!("serialize assumptions: {e}")))?;
+        let raw = time.raw.as_ref();
+        let (raw_value_text, raw_text, epoch, unit, precision) = match raw {
+            Some(raw) => (
+                raw.integer.map(|value| value.to_string()),
+                raw.text.clone(),
+                epoch_name(raw.epoch).to_string(),
+                unit_name(raw.unit).to_string(),
+                precision_name(raw.declared_precision).to_string(),
+            ),
+            None => (
+                None,
+                None,
+                "unix".into(),
+                "seconds".into(),
+                "unknown".into(),
+            ),
+        };
+        ops.push(WriteOp::fact(
+            "event_times",
+            vec![
+                "event_id",
+                "name",
+                "semantic",
+                "status",
+                "candidates_json",
+                "raw_field",
+                "raw_value_kind",
+                "raw_value_text",
+                "raw_text",
+                "epoch",
+                "unit",
+                "declared_precision",
+                "clock_domain",
+                "assumptions_json",
+            ],
+            vec![
+                Param::Text(event.id.clone()),
+                Param::Text(named.name.clone()),
+                Param::Text(semantic_name(&time.semantic).to_string()),
+                Param::Text(time_status_name(&time.status).to_string()),
+                Param::Text(candidates_json),
+                Param::OptText(raw.map(|raw| raw.field.clone())),
+                Param::OptText(
+                    raw.and_then(|raw| match (raw.integer, &raw.text) {
+                        (Some(_), _) => Some("integer"),
+                        (None, Some(_)) => Some("text"),
+                        (None, None) => None,
+                    })
+                    .map(str::to_string),
+                ),
+                Param::OptText(raw_value_text),
+                Param::OptText(raw_text),
+                Param::Text(epoch),
+                Param::Text(unit),
+                Param::Text(precision),
+                Param::Text(clock_domain_name(&time.clock_domain)),
+                Param::Text(assumptions_json),
+            ],
+        ));
+    }
+    Ok(ops)
+}
+
+impl CaseWriter {
     pub fn shutdown(&self) -> CoreResult<()> {
         let (reply, receiver) = std::sync::mpsc::channel();
         if self

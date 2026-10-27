@@ -12,11 +12,13 @@
 //! - [`integrity`] — streaming SHA-256 and the acquisition manifest (P2.2)
 //! - [`analysis`] — timeline/snapshot analysis over captured evidence (P3.1)
 //! - [`reports`] — versioned JSON/HTML report export (P3.2)
+//! - [`ingest`] — bounded log adapters with explicit time assumptions (P4.1)
 
 pub mod analysis;
 pub mod capture;
 pub mod domain;
 pub mod error;
+pub mod ingest;
 pub mod integrity;
 pub mod jobs;
 pub mod reports;

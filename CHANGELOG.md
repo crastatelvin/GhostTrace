@@ -81,3 +81,13 @@ file records implemented capability only.
   overwriting an earlier export. Added `xtask package` archive/checksum output
   with a build/target inventory, a ten-minute walkthrough with exact expected
   results (`docs/walkthrough.md`), report docs, and prerelease notes.
+- P4.1 (2026-10-27): bounded log ingestion — `ghosttrace import` with
+  signature detection or a recorded manual override, deterministic versioned
+  parse runs, exact byte locators, idempotent replays, and structured
+  diagnostics for oversized, non-UTF-8, malformed, or schema-mismatched
+  records. JSONL uses a fixed field/time-format mapping with no executable
+  expressions. RFC 5424 and selected RFC 3164 headers preserve raw fields;
+  RFC 3164 times stay unresolved without an operator-supplied year/zone, DST
+  overlaps stay ambiguous, and December→January sequences are never silently
+  rolled. Only tested sshd/sudo outcomes become events; everything else stays
+  raw (`docs/formats.md`).
