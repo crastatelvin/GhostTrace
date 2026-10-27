@@ -159,29 +159,8 @@ fn fsync_file(path: &Path) -> CoreResult<()> {
 }
 
 fn hash_file(path: &Path) -> CoreResult<(String, u64)> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let mut file =
-        std::fs::File::open(path).map_err(|e| CoreError::Storage(format!("hash open: {e}")))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    let mut total = 0u64;
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|e| CoreError::Storage(format!("hash read: {e}")))?;
-        if read == 0 {
-            break;
-        }
-        total += read as u64;
-        hasher.update(&buffer[..read]);
-    }
-    let digest = hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    Ok((digest, total))
+    let digest = crate::integrity::hash::digest_file(path)?;
+    Ok((digest.hex(), digest.byte_length))
 }
 
 #[cfg(test)]

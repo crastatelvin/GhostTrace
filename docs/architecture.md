@@ -10,7 +10,7 @@ plan governs intent and this file describes what actually exists.
 ```
 Source (protected copy / acknowledged live source)
   → Capture      spec validation, no-follow traversal, coverage ledger (P2.1)
-  → Copy/Hash    staging, streaming SHA-256, atomic publish (P2.2)
+  → Copy/Hash    staging, streaming SHA-256, atomic publish (P2.2, below)
   → Case storage fixed SQLite schema, one writer, checksummed migrations (P1.2)
   → Parsers      bounded workers, raw observations, journal/EVTX/browser adapters (P4/P8)
   → Service      shared query contract for desktop, TUI, CLI (P1.2+)
@@ -81,6 +81,69 @@ reviewed stub returning "not implemented yet" — the walker surface is
 platform-uniform so the Windows implementation (NtCreateFile with
 `FILE_FLAG_OPEN_REPARSE_POINT`, volume file IDs) has a defined home, but no
 silent Unix behavior is claimed for it.
+
+## Copy, hash, and recovery section (P2.2)
+
+### Publication protocol
+
+`capture/copy.rs` implements the plan's protocol in order, and every step
+fails closed:
+
+1. **Open** with `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK` — a link is
+   never followed, and a path that became a FIFO after traversal cannot hang
+   the worker.
+2. **Identity check** against the device/inode the walker observed. A source
+   replaced between observation and open is `unstable`, not captured.
+3. **Size cap** — files above `max_file_bytes` are recorded as `excluded` and
+   never read.
+4. **Reserve** — a 64 MiB free-space margin must remain; otherwise the run
+   stops with `ResourceLimit` instead of filling the disk.
+5. **Stream once** into a private `0600` staging file while hashing the same
+   bytes (one 64 KiB buffer; memory never scales with file size).
+6. **Sync** the staging file, then **re-check** the descriptor (fstat) and the
+   path (lstat). Any identity, size, or mtime change discards staging and
+   records `unstable`; a vanished path records `vanished`.
+7. **Publish** by atomic rename to `objects/sha256/ab/<digest>` and fsync the
+   bucket. Existing identical content is reused (`deduplicated`), never
+   overwritten with different bytes.
+
+A cancelled or failed copy removes its staging file and returns no digest, so
+a partial read can never be mistaken for a verified full-content hash. Up to
+four workers copy in parallel; the walker runs before copying, so memory is
+bounded by the entry cap rather than the file count.
+
+### Manifest v1
+
+`integrity/manifest.rs` writes `manifests/<acquisition>.json` with format
+`ghosttrace-manifest/1`: method, tool version, link policy, roots, coverage
+counts, and one entry per object (ID, root label, encoded relative path, exact
+byte length, SHA-256, store subpath, hardlink alias). Writing is atomic
+(private temp → sync → rename → directory sync) and formatting is stable.
+`verify_objects` re-hashes the *stored* copies; it never reads the source
+again, so later source changes cannot make a case look verified.
+
+### Job state and recovery
+
+The acquisition row and its `job_checkpoints` record are written before any
+bytes move and settled after the manifest exists. `completed` means every
+file the walker offered was published and the ledger has no
+inaccessible/unstable/vanished/unobserved entries; `partial` records a copy
+cap, a copy failure, traversal caps, or such ledger gaps; `cancelled` keeps
+unstarted tasks as explicit `unobserved` rows. A `running` checkpoint found
+on reopen stays recoverable (P1.2), never auto-completed.
+
+`inspect_recovery` reports two leftovers without touching them: abandoned
+`staging/*.part` files (our own incomplete copy) and published objects with no
+`evidence_objects` reference (a crash between rename and commit). The
+operator decides to adopt or quarantine; the tool never deletes published
+bytes.
+
+### Capture metadata events
+
+Each observed path also produces a `file.observed` event in parse run
+`capture.metadata.v1`, timed with the *application* clock (`occurrence_time`,
+host domain) — explicitly tool-observation time, not a source timestamp.
+Source timestamps arrive with the format parsers (P4+).
 
 ## Storage section (P1.2)
 

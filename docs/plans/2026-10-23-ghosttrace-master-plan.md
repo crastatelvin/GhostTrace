@@ -763,12 +763,14 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P2.1 traversal. **Produces:** Immutable published evidence objects, acquisition manifest v1, captured metadata events, progress/cancel results.
 
-- [ ] Test known SHA-256 vectors and complete copied bytes; a same-size/mime file and a large file must hash in bounded memory.
-- [ ] Test write failure/disk-space reserve, source replacement, metadata change during read, cancellation, and crash after object rename/before DB commit.
-- [ ] Implement private staging, streaming copy/hash, sync/atomic publish, metadata recheck, bounded workers, and safe interrupted-job recovery.
-- [ ] Test a partial digest never becomes a verified full digest; captured hash verifies the stored copy rather than a later source read.
-- [ ] Generate the acquisition manifest with coverage/method/tool versions and stable formatting.
-- [ ] Commit: `feat: store hashed evidence copies with recovery checkpoints`.
+- [x] Test known SHA-256 vectors and complete copied bytes; a same-size/mime file and a large file must hash in bounded memory.
+- [x] Test write failure/disk-space reserve, source replacement, metadata change during read, cancellation, and crash after object rename/before DB commit.
+- [x] Implement private staging, streaming copy/hash, sync/atomic publish, metadata recheck, bounded workers, and safe interrupted-job recovery.
+- [x] Test a partial digest never becomes a verified full digest; captured hash verifies the stored copy rather than a later source read.
+- [x] Generate the acquisition manifest with coverage/method/tool versions and stable formatting.
+- [x] Commit: `feat: store hashed evidence copies with recovery checkpoints`.
+
+**Completion evidence (2026-10-27):** `cargo test -p ghosttrace-core --test capture_hash --test capture_recovery --test input_mutation --locked` → 20 tests pass. SHA-256 known vectors match FIPS 180-4; an 8 MiB stream hashes through one fixed 64 KiB buffer (asserted by a reader that records its largest request); captured bytes equal source bytes and the stored object re-hashes to the recorded digest after the source is mutated. Same-size/different-content files get distinct object paths, identical content is stored once. Private `0600` staging → `sync_all` → identity/size/mtime recheck (fstat + lstat) → atomic rename → bucket fsync; `O_NOFOLLOW` + `O_NONBLOCK` opens reject links and never block on a FIFO; `ENOSPC` reserve (64 MiB) is refused before writing; cancellation returns no digest and removes staging; a crash after rename leaves an orphan that `inspect_recovery` reports and never deletes; abandoned `.part` staging is reported; permission-denied staging fails without publishing. Acquisition manifest v1 (`ghosttrace-manifest/1`) carries method, tool version, roots, coverage counts, and per-object length+SHA-256, verifies the stored copies, and is written atomically with stable formatting. End-to-end small case: 3 published objects, 4 captured + 1 unsupported coverage rows, 5 capture metadata events, zero recovery leftovers, source bytes unchanged; a second acquisition deduplicates content into 3 stored files while keeping two acquisition records. Windows remains a reviewed stub; Unix verified.
 
 #### P2.3 — Case and scan CLI
 
@@ -1096,7 +1098,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P1 | P1.1 | Lossless paths and time model | [x] |
 | P1 | P1.2 | Transactional case store/service | [x] |
 | P2 | P2.1 | Safe traversal and coverage | [x] |
-| P2 | P2.2 | Copy/hash/checkpoint/recovery | [ ] |
+| P2 | P2.2 | Copy/hash/checkpoint/recovery | [x] |
 | P2 | P2.3 | Scan/case CLI | [ ] |
 | P3 | P3.1 | Timeline and scoped diff | [ ] |
 | P3 | P3.2 | Verification and safe alpha reports | [ ] |

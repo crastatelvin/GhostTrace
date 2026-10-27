@@ -62,6 +62,8 @@ impl CoverageStatus {
 /// Stable reason codes shared with the CLI/desktop (plan Section 6 table).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoverageReason {
+    /// The path's content was captured and published (never a gap).
+    Captured,
     /// Policy excluded this path (pattern, depth, size, type).
     PolicyExcluded(String),
     /// Permission denied to the tool as run.
@@ -85,6 +87,7 @@ pub enum CoverageReason {
 impl CoverageReason {
     pub fn code(&self) -> &'static str {
         match self {
+            CoverageReason::Captured => "captured",
             CoverageReason::PolicyExcluded(_) => "policy_excluded",
             CoverageReason::PermissionDenied(_) => "permission_denied",
             CoverageReason::NotFollowed => "symlink_not_followed",
@@ -100,6 +103,7 @@ impl CoverageReason {
     /// Detail for humans; never contains evidence content.
     pub fn detail(&self) -> &str {
         match self {
+            CoverageReason::Captured => "content captured",
             CoverageReason::PolicyExcluded(detail)
             | CoverageReason::PermissionDenied(detail)
             | CoverageReason::SpecialFile(detail)
@@ -222,12 +226,15 @@ impl CoverageSummary {
 /// Build coverage-table write batches (idempotent upserts keyed by
 /// acquisition + path + scope, matching the SQL unique index). The `error_code`
 /// column carries the stable category plus its bounded detail.
+///
+/// Keys are root-qualified (see [`coverage_key`]) so two roots that happen to
+/// contain the same relative path never overwrite each other's row.
 pub fn coverage_batch(
     acquisition_id: &str,
-    outcomes: &[CoverageOutcome],
+    rows: &[(String, CoverageOutcome)],
 ) -> Result<WriteBatch, CoreError> {
     let mut batch = WriteBatch::new();
-    for outcome in outcomes {
+    for (path_key, outcome) in rows {
         batch = batch.push(WriteOp::upsert(
             "coverage",
             vec![
@@ -240,7 +247,7 @@ pub fn coverage_batch(
             ],
             vec![
                 Param::Text(acquisition_id.to_string()),
-                Param::Text(coverage_key(outcome)),
+                Param::Text(path_key.clone()),
                 Param::Text(outcome.status.as_str().to_string()),
                 Param::Text(format!(
                     "{}: {}",
@@ -255,9 +262,15 @@ pub fn coverage_batch(
     Ok(batch)
 }
 
-/// Stable key for the coverage unique index: the encoded native path.
-pub fn coverage_key(outcome: &CoverageOutcome) -> String {
-    outcome.native_relative.encoded()
+/// Stable key for the coverage unique index: the root's encoded native path
+/// plus the root-relative path. Absolute because the key is case-local.
+pub fn coverage_key(root_native_encoded: &str, outcome: &CoverageOutcome) -> String {
+    let relative = outcome.native_relative.encoded();
+    if relative.is_empty() {
+        root_native_encoded.to_string()
+    } else {
+        format!("{root_native_encoded}/{relative}")
+    }
 }
 
 #[cfg(test)]

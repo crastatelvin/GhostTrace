@@ -238,7 +238,7 @@ fn captured_outcome(entry: &WalkedEntry) -> CoverageOutcome {
         native_relative: entry.native_relative.clone(),
         depth: entry.depth,
         status: CoverageStatus::Captured,
-        reason: CoverageReason::PolicyExcluded("captured".into()),
+        reason: CoverageReason::Captured,
         object_identity: entry.object_identity.clone(),
         hardlink_alias: entry.hardlink_alias,
     }

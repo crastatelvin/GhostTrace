@@ -9,10 +9,12 @@
 //! - [`service`] — the shared `CaseSession` every front end queries (P1.2)
 //! - [`sqlite_report`] — linked-runtime verification (P0.1)
 //! - [`jobs`] — job states, checkpoints, and recovery detection (P1.2)
+//! - [`integrity`] — streaming SHA-256 and the acquisition manifest (P2.2)
 
 pub mod capture;
 pub mod domain;
 pub mod error;
+pub mod integrity;
 pub mod jobs;
 pub mod service;
 pub mod sqlite_report;

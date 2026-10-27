@@ -41,6 +41,7 @@ pub struct CaseOpenReport {
 /// An open case: layout + config + the one writer + readers on demand.
 pub struct CaseSession {
     layout: CaseLayout,
+    case_id: String,
     config: CaseConfig,
     writer: CaseWriter,
     display_timezone: String,
@@ -118,6 +119,7 @@ impl CaseSession {
         let display_timezone = config.display_timezone.clone();
         Ok(Self {
             layout,
+            case_id: id,
             config,
             writer,
             display_timezone,
@@ -144,13 +146,22 @@ impl CaseSession {
         drop(connection);
 
         let writer = CaseWriter::spawn(layout.database_path())?;
-        let recoverable_jobs = {
+        let (case_id, recoverable_jobs) = {
             let reader = CaseReader::open(&layout.database_path())?;
-            reader.recoverable_jobs()?
+            let case_id: String = reader
+                .connection()
+                .query_row(
+                    "SELECT id FROM cases ORDER BY created_seconds LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| CoreError::Storage(format!("case id: {error}")))?;
+            (case_id, reader.recoverable_jobs()?)
         };
 
         let session = Self {
             layout,
+            case_id,
             config,
             writer,
             display_timezone,
@@ -166,6 +177,11 @@ impl CaseSession {
 
     pub fn layout(&self) -> &CaseLayout {
         &self.layout
+    }
+
+    /// The opaque application-generated case ID (stable across opens).
+    pub fn case_id(&self) -> &str {
+        &self.case_id
     }
 
     pub fn config(&self) -> &CaseConfig {

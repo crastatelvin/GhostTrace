@@ -13,6 +13,7 @@
 //! - Object identity is observed (device + inode / file index) for hardlink
 //!   detection and dedupe, scoped to the acquisition, never global.
 
+pub mod copy;
 pub mod coverage;
 pub mod unix;
 pub mod walker;

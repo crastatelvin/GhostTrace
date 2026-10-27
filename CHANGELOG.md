@@ -47,3 +47,13 @@ file records implemented capability only.
   categories, bounded diagnostics, the ordinary-user permission test that
   self-skips under root, and the tracked `path-edges` fixture definition
   (`docs/architecture.md` capture section).
+- P2.2 (2026-10-27): streaming copy, hashing, and recovery — one fixed
+  64 KiB buffer hashes exactly the bytes written, private staging files sync
+  and are atomically renamed into `objects/sha256/ab/<digest>` after an
+  identity/size/mtime recheck (no-follow open, FIFO-safe), free-space reserve,
+  bounded copy workers with explicit cancellation outcomes, and recovery
+  inspection that reports abandoned staging and published-but-uncommitted
+  objects without deleting evidence. Acquisition manifest v1 records method,
+  tool version, roots, coverage counts, and per-object length/SHA-256 and
+  verifies the stored copy. Capture metadata events (`file.observed`, application
+  clock) and the `small-case` fixture definition complete the phase.
