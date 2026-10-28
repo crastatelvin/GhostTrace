@@ -76,7 +76,9 @@ only letters, digits, `-`, `_`, and `.`; anything else is a usage error.
 - Timeline: events of that revision, in chosen-time order, limited by
   `--limit` (recorded in `provenance.timeline_selection`).
 - Provenance: generator, tool version, method, claimed source, link policy,
-  roots, and `signed: false`.
+  roots, and `signed: false`. `generated_by` names the front end that built the
+  report (`ghosttrace-cli` or `ghosttrace-desktop`); it is never hard-coded to a
+  tool that did not run.
 
 The timeline is pinned to exactly one revision. A re-import records a new
 revision rather than replacing the earlier one, so pinning is what makes a
@@ -89,6 +91,13 @@ deterministically. A report never mixes two revisions' events.
 The JSON report is full fidelity: labels and claim text are stored exactly as
 recorded (JSON escaping still applies). The HTML view is the safe presentation
 layer.
+
+The desktop "Report and verify" screen calls the same builder and publisher, so
+the CLI and GUI produce the same format from the same recorded rows. P6.4
+exports **unredacted** reports from both front ends; redaction selection and
+preview arrive with P9.2. The desktop refuses a destination that is empty,
+relative, or inside the case directory, and a second export of the same report
+id fails instead of overwriting.
 
 ### HTML safety
 

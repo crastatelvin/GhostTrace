@@ -780,6 +780,7 @@ fn report(args: ReportArgs) -> u8 {
         label: session.config().label.clone(),
         display_timezone: session.config().display_timezone.clone(),
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        generated_by: "ghosttrace-cli".to_string(),
     };
     let selection = ReportSelection {
         acquisition_id: args.acquisition,

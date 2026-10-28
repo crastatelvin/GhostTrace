@@ -1,8 +1,9 @@
-//! Minimal native prerelease packaging (plan P3.2).
+//! Minimal native prerelease packaging (plan P3.2, extended by P6.4).
 //!
-//! Builds a tar.gz from an already-built CLI plus licences, help text, sample
-//! data, and a real build/target inventory, then writes a matching SHA-256.
-//! Nothing is uploaded and no network is used.
+//! Builds a tar.gz from an already-built CLI and desktop pair plus licences,
+//! help text, platform support, sample data, and a real build/target
+//! inventory, then writes a matching SHA-256. Nothing is uploaded and no
+//! network is used.
 
 use std::fs;
 #[cfg(unix)]
@@ -18,6 +19,8 @@ use sha2::{Digest, Sha256};
 pub struct Options {
     pub output: PathBuf,
     pub binary: Option<PathBuf>,
+    /// Desktop binary; the P6.4 bundle ships the CLI/desktop pair.
+    pub desktop: Option<PathBuf>,
     pub version: String,
 }
 
@@ -60,6 +63,16 @@ pub fn run(options: &Options) -> Result<Summary, String> {
             binary.display()
         ));
     }
+    let desktop = options
+        .desktop
+        .clone()
+        .unwrap_or_else(|| root.join("target/release/ghosttrace-desktop"));
+    if !desktop.is_file() {
+        return Err(format!(
+            "desktop binary {} not found; build it first (cargo build -p ghosttrace-desktop --release)",
+            desktop.display()
+        ));
+    }
     let target = command_output("rustc", &["-vV"])
         .and_then(|text| {
             text.lines()
@@ -95,9 +108,16 @@ pub fn run(options: &Options) -> Result<Summary, String> {
         fs::create_dir_all(staging.join("bin")).map_err(|e| format!("staging: {e}"))?;
         copy(&binary, &staging.join("bin/ghosttrace"))?;
         make_executable(&staging.join("bin/ghosttrace"))?;
+        copy(&desktop, &staging.join("bin/ghosttrace-desktop"))?;
+        make_executable(&staging.join("bin/ghosttrace-desktop"))?;
 
         // Licences, docs, help, and sample data ship with every archive.
-        for name in ["LICENSE-APACHE", "LICENSE-MIT", "README.md"] {
+        for name in [
+            "LICENSE-APACHE",
+            "LICENSE-MIT",
+            "THIRD_PARTY_NOTICES.md",
+            "README.md",
+        ] {
             copy(&root.join(name), &staging.join(name))?;
         }
         fs::create_dir_all(staging.join("docs")).map_err(|e| format!("staging: {e}"))?;
@@ -121,6 +141,21 @@ pub fn run(options: &Options) -> Result<Summary, String> {
             return Err("binary --help failed; the archive must describe itself".to_string());
         }
         fs::write(staging.join("help.txt"), &help.stdout).map_err(|e| format!("help: {e}"))?;
+
+        // The desktop must identify its build without a display server, so the
+        // extracted bundle can be smoke-run on a headless host.
+        let desktop_version = Command::new(&desktop)
+            .arg("--version")
+            .output()
+            .map_err(|error| format!("run desktop --version: {error}"))?;
+        if !desktop_version.status.success()
+            || !String::from_utf8_lossy(&desktop_version.stdout).contains(&options.version)
+        {
+            return Err(
+                "desktop --version failed or reported another version; refusing to package"
+                    .to_string(),
+            );
+        }
 
         fs::create_dir_all(staging.join("sample/notes")).map_err(|e| format!("sample: {e}"))?;
         fs::write(
@@ -270,10 +305,15 @@ mod tests {
         let binary = dir.path().join("fake-ghosttrace");
         fs::write(&binary, "#!/bin/sh\necho fake-ghosttrace-ok\n").expect("fake binary");
         make_executable(&binary).expect("chmod");
+        let desktop = dir.path().join("fake-ghosttrace-desktop");
+        fs::write(&desktop, "#!/bin/sh\necho ghosttrace-desktop 9.9.9-test\n")
+            .expect("fake desktop");
+        make_executable(&desktop).expect("chmod");
         let output = dir.path().join("dist");
         let summary = run(&Options {
             output: output.clone(),
             binary: Some(binary),
+            desktop: Some(desktop),
             version: "9.9.9-test".into(),
         })
         .expect("package");
@@ -308,8 +348,18 @@ mod tests {
                 .iter()
                 .any(|file| file["path"] == "bin/ghosttrace")
         );
+        assert!(
+            info["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["path"] == "bin/ghosttrace-desktop"),
+            "the bundle carries the CLI/desktop pair"
+        );
         assert!(package.join("sample/notes/log.txt").is_file());
         assert!(package.join("help.txt").is_file());
+        assert!(package.join("THIRD_PARTY_NOTICES.md").is_file());
+        assert!(package.join("docs/gui-guide.md").is_file());
 
         let smoke = Command::new(package.join("bin/ghosttrace"))
             .arg("--help")
@@ -320,11 +370,21 @@ mod tests {
             String::from_utf8_lossy(&smoke.stdout),
             "fake-ghosttrace-ok\n"
         );
+        let desktop_smoke = Command::new(package.join("bin/ghosttrace-desktop"))
+            .arg("--version")
+            .output()
+            .expect("desktop smoke run");
+        assert!(desktop_smoke.status.success());
+        assert!(
+            String::from_utf8_lossy(&desktop_smoke.stdout).contains("9.9.9-test"),
+            "the extracted desktop identifies its build"
+        );
 
         // Re-packaging never overwrites the published archive.
         let again = run(&Options {
             output: output.clone(),
             binary: Some(package.join("bin/ghosttrace")),
+            desktop: Some(package.join("bin/ghosttrace-desktop")),
             version: "9.9.9-test".into(),
         });
         assert!(again.is_err());

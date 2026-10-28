@@ -140,6 +140,7 @@ fn a_published_report_stays_reproducible_after_a_reparse() {
         label: "reparse".into(),
         display_timezone: "UTC".into(),
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        generated_by: "ghosttrace-test".into(),
     };
     let selection = ReportSelection {
         acquisition_id: Some(acquisition.clone()),

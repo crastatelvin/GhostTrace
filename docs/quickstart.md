@@ -64,12 +64,14 @@ the P0.1 evidence that the storage stack works as planned, recorded by
 cargo run -p ghosttrace-desktop
 ```
 
-The P6.3 shell creates or opens a case, captures a source directory, imports one
+The P6.4 shell creates or opens a case, captures a source directory, imports one
 captured object, then browses the timeline with filters, a declared-bin
 histogram, and a provenance inspector for each event. It also compares two
 captures, lists bounded relationships with their support, explains findings and
-records dispositions, and stores typed saved views. Progress, cancellation, and
-recovery review are included. See [gui-guide.md](gui-guide.md). `--renderer wgpu` selects the optional backend.
+records dispositions, stores typed saved views, and exports an unredacted
+report and verifies a manifest. Dark, light, and high-contrast appearance is
+selectable in the header. Progress, cancellation, and recovery review are
+included. See [gui-guide.md](gui-guide.md). `--renderer wgpu` selects the optional backend.
 With the `screenshot` cargo feature and the glow renderer,
 `EFRAME_SCREENSHOT_TO=shot.png` writes one frame and exits.
 

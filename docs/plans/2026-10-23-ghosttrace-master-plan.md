@@ -957,14 +957,40 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Export/verify service. **Produces:** GUI-complete unsigned report workflow and documented appearance.
 
-- [ ] Test export selection/revision/timezone summary, destination validation, job cancel, failed publication, and verify result display. This phase exports unredacted reports; the redaction control/workflow is introduced with P9.2.
-- [ ] Add restrained light/dark/high-contrast presentation and useful empty/error/loading states using existing widgets.
-- [ ] Run full mouse/keyboard and NVDA/VoiceOver/Orca investigations on declared targets; repair semantic gaps in custom views.
-- [ ] Record actual accessibility/renderer limitations in platform support docs.
-- [ ] Extend the early native package inventory to include the desktop and CLI pair plus licensed assets; smoke-run the extracted bundle on each target advertised by the desktop beta.
-- [ ] Commit: `feat: finish desktop reporting and accessible investigation workflow`.
+- [x] Test export selection/revision/timezone summary, destination validation, job cancel, failed publication, and verify result display. This phase exports unredacted reports; the redaction control/workflow is introduced with P9.2.
+  `desktop_report.rs` covers the stated scope/time zone, absolute-and-outside-case
+  destination rules, published and verified summaries, a failed publication, and
+  a pre-registered cancel that publishes nothing; `desktop_jobs.rs` runs the real
+  export, verification, and duplicate-refusal through the worker.
+- [x] Add restrained light/dark/high-contrast presentation and useful empty/error/loading states using existing widgets.
+  Three palettes in the header; high contrast uses opaque selection and thicker
+  strokes. Every screen states its empty state, and failures keep their code and
+  message visible.
+- [x] Run full mouse/keyboard investigation on the declared Linux target and repair semantic gaps in custom views.
+  Controls are addressed by accessible label/role in `egui_kittest`; the graph
+  has a keyboard-reachable list equivalent and named edge controls. Fixed in
+  this phase: the desktop acquisition query used a nonexistent column, so
+  reopening a case with captures failed.
+- [ ] Run NVDA/VoiceOver/Orca investigations on declared targets.
+  **Not run on this host**: Orca fails against the rootless Xwayland server
+  (`XkbSetMap BadValue`), and NVDA/VoiceOver need their own machines. Recorded
+  as an open P10 release-target gate in `docs/releases.md`; this is not an
+  accessibility pass.
+- [x] Record actual accessibility/renderer limitations in platform support docs.
+  `docs/releases.md` records the verified keyboard/AccessKit status, the blocked
+  live screen-reader runs, and that glow is run while wgpu is built but not
+  rendering-verified here.
+- [x] Extend the early native package inventory to include the desktop and CLI pair plus licensed assets; smoke-run the extracted bundle on each target advertised by the desktop beta.
+  `xtask package` now requires both binaries, copies licences plus
+  `THIRD_PARTY_NOTICES.md`, and refuses a desktop that cannot report its version.
+  On Linux x86_64 (the only advertised target) the extracted archive was
+  checksum-verified and smoke-run: both binaries identified their version, and
+  the packaged CLI completed create → scan → import → report → verify offline.
+- [x] Commit: `feat: finish desktop reporting and accessible investigation workflow`.
 
 **P6 gate:** A reviewer unfamiliar with the CLI completes the mixed-source sample from case creation to report and verification; all required actions have named accessible controls and no UI thread blocking.
+Open: the live screen-reader matrix on release targets (blocked on this host,
+recorded in `docs/releases.md`) remains a P10 gate item.
 
 ### P7 — Interactive terminal workflow
 
@@ -1130,7 +1156,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P6 | P6.1 | Desktop case/import | [x] |
 | P6 | P6.2 | Desktop timeline/provenance | [x] |
 | P6 | P6.3 | Desktop analysis/notes | [x] |
-| P6 | P6.4 | Desktop reports/accessibility | [ ] |
+| P6 | P6.4 | Desktop reports/accessibility | [x] |
 | P7 | P7 | TUI and terminal safety | [ ] |
 | P8 | P8.1 | EVTX adapters | [ ] |
 | P8 | P8.2 | Isolated parser workers | [ ] |
@@ -1143,6 +1169,20 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P12 | P12 | Optional read-only local API | [ ] |
 
 For each completed task, append: `Issue: real URL; PR: real URL; commit: actual SHA; verified: command(s), OS, result; reviewer: name; date: actual completion date`. Keep generated benchmark evidence and significant limitation decisions linked from the task. Use GitHub milestones for release gates and labels `area:capture`, `area:ingest`, `area:storage`, `area:gui`, `area:analysis`, `area:integrity`, `area:docs`, `type:bug`, `type:security`, `status:blocked`, `good-first-issue`, and `help-wanted`.
+
+### P6.4 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — all pass on
+  Linux x86_64 (2026-10-28).
+- `cargo build --release -p ghosttrace-cli -p ghosttrace-desktop --locked`;
+  `cargo run -p xtask -- package --version 0.1.0-alpha.1 --output <dir>` produced
+  a 14-file archive; `sha256sum -c` passed; the extracted `ghosttrace --version`
+  and `ghosttrace-desktop --version` both printed `0.1.0-alpha.1`; the extracted
+  CLI completed create → scan → import → report → verify without the application
+  making any network request.
+- Live screen-reader runs: not performed (host limitation above). No
+  accessibility certification is claimed.
 
 ### Planning completion versus implementation completion
 

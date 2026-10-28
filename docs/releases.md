@@ -80,3 +80,31 @@ release packaging.
 - Only Linux x86_64 has build+run evidence. Windows/macOS support statements
   wait for actual verification; nothing in the repository should imply they are
   supported yet.
+
+## P6.4 desktop bundle and appearance (2026-10-28)
+
+- `cargo run -p xtask -- package --version <v>` now requires the CLI and the
+  desktop binary and ships `bin/ghosttrace` + `bin/ghosttrace-desktop` together
+  with licences, the CLI/GUI/report/release docs, the sample folder, `help.txt`
+  (CLI `--help`), and a `build-info.json` inventory of every packaged file with
+  its SHA-256. The desktop binary supports `--version` without a display server,
+  so the extracted bundle can be smoke-run headlessly; packaging refuses a
+  desktop binary that fails that check.
+- The archive is `ghosttrace-<version>-<target>.tar.gz` plus a matching
+  `.sha256`; packaging still refuses to overwrite an existing archive.
+- Appearance: Dark (default), Light, and High contrast, selected in the header.
+  The choice is per session. High contrast is a black background with white
+  text, opaque selection, and thicker strokes; no meaning relies on hue.
+- Accessibility status at P6.4: every screen's controls are named and reachable
+  by keyboard in the `egui_kittest`/AccessKit tree, custom views (the
+  relationship graph) have a keyboard-reachable list equivalent, and the
+  timeline/graph/findings selection keys are covered by tests. A **live
+  screen-reader run was not possible on this host**: Orca fails against the
+  rootless Xwayland server (`XkbSetMap BadValue`) and NVDA/VoiceOver need their
+  own machines. This remains a P10 release-target gate; it is not an
+  accessibility certification.
+- Renderer status: glow is the default and has been run on this host. The wgpu
+  feature compiles in `xtask check`; rendering through wgpu was not exercised in
+  this session, so it is built but not claimed as verified.
+- Desktop report export is unredacted until P9.2. The report screen states this
+  before the export control.

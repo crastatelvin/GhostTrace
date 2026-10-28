@@ -17,7 +17,7 @@ enum Cli {
         #[arg(long)]
         verify: bool,
     },
-    /// Build a checksummed prerelease archive from an already-built CLI.
+    /// Build a checksummed prerelease archive from an already-built CLI/desktop pair.
     Package {
         /// Directory that receives the archive and its .sha256 file.
         #[arg(long, default_value = "dist")]
@@ -25,6 +25,9 @@ enum Cli {
         /// CLI binary to package (default: target/release/ghosttrace).
         #[arg(long)]
         binary: Option<std::path::PathBuf>,
+        /// Desktop binary to package (default: target/release/ghosttrace-desktop).
+        #[arg(long)]
+        desktop: Option<std::path::PathBuf>,
         /// Version string used in the package name.
         #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
         version: String,
@@ -45,10 +48,12 @@ fn main() {
         Cli::Package {
             output,
             binary,
+            desktop,
             version,
         } => package::run(&package::Options {
             output,
             binary,
+            desktop,
             version,
         })
         .map(|summary| println!("{}", serde_json::to_string(&summary).expect("summary"))),

@@ -128,6 +128,9 @@ pub struct ReportContext {
     pub label: String,
     pub display_timezone: String,
     pub tool_version: String,
+    /// Which front end built the report. Provenance must not claim a tool that
+    /// did not run.
+    pub generated_by: String,
 }
 
 #[derive(Debug, Clone)]
@@ -402,7 +405,7 @@ pub fn build_report(
         objects,
         timeline,
         provenance: ProvenanceView {
-            generated_by: "ghosttrace-cli".to_string(),
+            generated_by: context.generated_by.clone(),
             tool_version: context.tool_version.clone(),
             method: acquisition.1,
             claimed_source: acquisition.2,

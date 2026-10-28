@@ -164,6 +164,17 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P6.4 (2026-10-28): desktop reporting and accessible investigation workflow —
+  unredacted report export through the shared `reports::build_report`/`publish`
+  path with an explicit scope/time-zone/revision summary, absolute-and-outside-
+  case destination validation, job cancellation that publishes nothing, visible
+  failed publications, and manifest verification results; dark/light/high-
+  contrast palettes with explicit empty/loading/error states; `xtask package`
+  now ships and smoke-checks the CLI/desktop pair plus licences and
+  `THIRD_PARTY_NOTICES.md`; report provenance records the front end that built
+  it (`generated_by`). Fixed the desktop acquisition list query (it ordered by a
+  nonexistent column, so reopening a case with captures failed). Live
+  screen-reader runs remain a recorded P10 gate limitation.
 - P6.3 (2026-10-28): snapshot comparison and explainable analysis in the
   desktop — coverage-aware diff of two recorded captures with scope verdict,
   warnings, per-class counts, keyset paging, and `unknown` kept as its own

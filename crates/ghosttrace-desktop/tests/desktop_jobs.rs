@@ -201,7 +201,7 @@ fn worker_creates_captures_and_imports_a_case() {
 
             bus.send(Command::SaveView {
                 id: 7,
-                case_directory: case,
+                case_directory: case.clone(),
                 name: "hello events".into(),
                 filter: SavedFilter {
                     text: Some("hello".into()),
@@ -216,6 +216,98 @@ fn worker_creates_captures_and_imports_a_case() {
                     outcome: Outcome::ViewSaved { name },
                     ..
                 } => assert_eq!(name, "hello events"),
+                other => panic!("unexpected event: {other:?}"),
+            }
+
+            // Reopening lists the recorded capture. This exercises the real
+            // acquisition query, which the workflow tests only stubbed.
+            bus.send(Command::OpenCase {
+                id: 11,
+                directory: case.clone(),
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 11, .. })
+            });
+            match event {
+                CommandEvent::Finished {
+                    outcome: Outcome::CaseOpened { acquisitions, .. },
+                    ..
+                } => {
+                    assert_eq!(acquisitions.len(), 1);
+                    assert_eq!(acquisitions[0].state, "completed");
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+
+            // P6.4: export the unredacted report, verify the stored bytes, and
+            // prove a second publication of the same id is refused.
+            let reports = dir.path().join("reports");
+            bus.send(Command::Report {
+                id: 8,
+                case_directory: case.clone(),
+                output: reports.display().to_string(),
+                acquisition_id: None,
+                revision: None,
+                event_limit: 50,
+                report_id: None,
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 8, .. })
+            });
+            let report_id = match event {
+                CommandEvent::Finished {
+                    outcome:
+                        Outcome::ReportPublished {
+                            report_id,
+                            json,
+                            html,
+                            objects,
+                            ..
+                        },
+                    ..
+                } => {
+                    assert!(objects >= 1, "the capture recorded at least one object");
+                    assert!(Path::new(&json).is_file());
+                    assert!(Path::new(&html).is_file());
+                    report_id
+                }
+                other => panic!("unexpected event: {other:?}"),
+            };
+
+            bus.send(Command::Verify {
+                id: 9,
+                case_directory: case.clone(),
+                manifest_path: None,
+                acquisition_id: None,
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 9, .. })
+            });
+            match event {
+                CommandEvent::Finished {
+                    outcome: Outcome::Verified { objects, .. },
+                    ..
+                } => assert!(objects >= 1),
+                other => panic!("unexpected event: {other:?}"),
+            }
+
+            bus.send(Command::Report {
+                id: 10,
+                case_directory: case,
+                output: reports.display().to_string(),
+                acquisition_id: None,
+                revision: None,
+                event_limit: 50,
+                report_id: Some(report_id),
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Failed { id: 10, .. })
+            });
+            match event {
+                CommandEvent::Failed { code, message, .. } => {
+                    assert_eq!(code, "storage");
+                    assert!(message.contains("already exists"), "{message}");
+                }
                 other => panic!("unexpected event: {other:?}"),
             }
         }

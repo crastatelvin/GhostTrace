@@ -33,6 +33,7 @@ pub enum Screen {
     Diff,
     Relations,
     Findings,
+    Report,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1217,6 +1218,156 @@ impl FindingsState {
     }
 }
 
+/// Appearance choices. Restrained by design: three complete palettes, no
+/// per-widget customization and no colour-only meaning.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ThemeChoice {
+    #[default]
+    Dark,
+    Light,
+    HighContrast,
+}
+
+impl ThemeChoice {
+    pub const ALL: [ThemeChoice; 3] = [
+        ThemeChoice::Dark,
+        ThemeChoice::Light,
+        ThemeChoice::HighContrast,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::Dark => "Dark",
+            ThemeChoice::Light => "Light",
+            ThemeChoice::HighContrast => "High contrast",
+        }
+    }
+
+    /// High contrast is a dark base with maximum text/stroke contrast and an
+    /// opaque selection, so focus and selection never rely on hue alone.
+    pub fn visuals(self) -> egui::Visuals {
+        match self {
+            ThemeChoice::Dark => egui::Visuals::dark(),
+            ThemeChoice::Light => egui::Visuals::light(),
+            ThemeChoice::HighContrast => {
+                let mut visuals = egui::Visuals::dark();
+                visuals.override_text_color = Some(egui::Color32::WHITE);
+                visuals.panel_fill = egui::Color32::BLACK;
+                visuals.window_fill = egui::Color32::BLACK;
+                visuals.extreme_bg_color = egui::Color32::BLACK;
+                visuals.faint_bg_color = egui::Color32::from_gray(24);
+                visuals.selection.bg_fill = egui::Color32::from_rgb(0, 84, 200);
+                visuals.selection.stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
+                visuals.widgets.noninteractive.bg_stroke =
+                    egui::Stroke::new(1.5, egui::Color32::from_gray(200));
+                visuals.widgets.inactive.bg_stroke =
+                    egui::Stroke::new(1.5, egui::Color32::from_gray(220));
+                visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
+                visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
+                visuals.widgets.active.bg_fill = egui::Color32::from_gray(70);
+                visuals
+            }
+        }
+    }
+}
+
+/// One published report, as reported by the job worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportSummary {
+    pub report_id: String,
+    pub directory: String,
+    pub json: String,
+    pub html: String,
+    pub objects: usize,
+    pub events: usize,
+    pub gaps: u64,
+}
+
+/// One manifest verification result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifySummary {
+    pub manifest_id: String,
+    pub acquisition_id: String,
+    pub format: String,
+    pub objects: u64,
+    pub total_bytes: u64,
+    pub captured: u64,
+    pub gaps: u64,
+}
+
+/// Report export and manifest verification state (P6.4).
+#[derive(Debug, Clone)]
+pub struct ReportState {
+    pub acquisition: Option<String>,
+    /// Revision to report; empty means the newest parse run of the acquisition.
+    pub revision: String,
+    pub event_limit: u32,
+    pub destination: String,
+    pub report_id: String,
+    pub last: Option<ReportSummary>,
+    pub manifest_path: String,
+    pub verify_acquisition: Option<String>,
+    pub verification: Option<VerifySummary>,
+    pub status: String,
+    pub verifying: bool,
+}
+
+impl Default for ReportState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReportState {
+    pub fn new() -> Self {
+        Self {
+            acquisition: None,
+            revision: String::new(),
+            event_limit: 500,
+            destination: String::new(),
+            report_id: String::new(),
+            last: None,
+            manifest_path: String::new(),
+            verify_acquisition: None,
+            verification: None,
+            status: "no report exported yet".into(),
+            verifying: false,
+        }
+    }
+
+    pub fn reset(&mut self, acquisitions: &[AcquisitionSummary], revision: Option<String>) {
+        self.acquisition = acquisitions.first().map(|item| item.acquisition_id.clone());
+        self.verify_acquisition = self.acquisition.clone();
+        self.revision = revision.unwrap_or_default();
+        self.last = None;
+        self.verification = None;
+        self.verifying = false;
+        self.status = if acquisitions.is_empty() {
+            "record a capture before exporting a report".into()
+        } else {
+            "ready to export".into()
+        };
+    }
+
+    /// A destination is a real, absolute directory outside the case: a report
+    /// never lands inside case storage by accident.
+    pub fn destination_problem(&self, case_directory: &str) -> Option<String> {
+        let destination = self.destination.trim();
+        if destination.is_empty() {
+            return Some("a destination directory is required".into());
+        }
+        let path = std::path::Path::new(destination);
+        if !path.is_absolute() {
+            return Some("the destination must be an absolute path".into());
+        }
+        let case_root = std::path::Path::new(case_directory);
+        if path.starts_with(case_root) {
+            return Some("the destination must be outside the case directory".into());
+        }
+        None
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct AppState {
     pub screen: Screen,
@@ -1232,6 +1383,9 @@ pub struct AppState {
     pub diff: DiffState,
     pub relations: RelationsState,
     pub findings: FindingsState,
+    pub report: ReportState,
+    pub theme: ThemeChoice,
+    applied_theme: Option<ThemeChoice>,
     next_id: u64,
     pending: Vec<Command>,
     pending_queries: Vec<QueryRequest>,
@@ -1247,6 +1401,7 @@ impl AppState {
         state.diff = DiffState::new();
         state.relations = RelationsState::new();
         state.findings = FindingsState::new();
+        state.report = ReportState::new();
         state
     }
 
@@ -1511,6 +1666,61 @@ impl AppState {
         });
     }
 
+    /// Export a report for the chosen acquisition and revision. The output is
+    /// unredacted in this phase and the screen says so before the button.
+    pub fn export_report(&mut self) {
+        if self.is_running() {
+            self.notice_error("a job is already running; cancel it before exporting");
+            return;
+        }
+        let Some(case_directory) = self.case_directory() else {
+            self.notice_error("open a case before exporting a report");
+            return;
+        };
+        if let Some(problem) = self.report.destination_problem(&case_directory) {
+            self.notice_error(problem.clone());
+            self.report.status = problem;
+            return;
+        }
+        let output = self.report.destination.trim().to_string();
+        let acquisition_id = self.report.acquisition.clone();
+        let revision = non_empty(&self.report.revision);
+        let event_limit = self.report.event_limit.clamp(1, 10_000);
+        let report_id = non_empty(&self.report.report_id);
+        self.report.status = "exporting report…".into();
+        self.start(|id| Command::Report {
+            id,
+            case_directory,
+            output,
+            acquisition_id,
+            revision,
+            event_limit,
+            report_id,
+        });
+    }
+
+    /// Verify the stored bytes of one manifest (the latest by default).
+    pub fn verify_case(&mut self) {
+        if self.is_running() {
+            self.notice_error("a job is already running; cancel it before verifying");
+            return;
+        }
+        let Some(case_directory) = self.case_directory() else {
+            self.notice_error("open a case before verifying a manifest");
+            return;
+        };
+        let manifest_path = non_empty(&self.report.manifest_path);
+        let acquisition_id = self.report.verify_acquisition.clone();
+        self.report.verifying = true;
+        self.report.status = "verifying stored bytes…".into();
+        self.start(|id| Command::Verify {
+            id,
+            case_directory,
+            manifest_path,
+            acquisition_id,
+        });
+    }
+
     /// Apply one query result. Results from a superseded generation change
     /// nothing; failures stay actionable instead of silently emptying a pane.
     pub fn apply_query(&mut self, result: QueryResult) {
@@ -1642,6 +1852,12 @@ impl AppState {
                 self.job.state = JobState::Failed;
                 self.job.message = format!("{} failed", phase.label());
                 self.notice_error(format!("{code}: {message}"));
+                if phase == JobPhase::Verify {
+                    self.report.verifying = false;
+                    self.report.status = format!("verification failed: {code}: {message}");
+                } else if phase == JobPhase::Report {
+                    self.report.status = format!("export failed: {code}: {message}");
+                }
             }
         }
     }
@@ -1673,6 +1889,7 @@ impl AppState {
                 self.diff.reset(&[]);
                 self.relations.reset(None);
                 self.findings.reset(None);
+                self.report.reset(&[], None);
                 self.screen = Screen::Import;
                 self.show_recovery = false;
             }
@@ -1694,6 +1911,7 @@ impl AppState {
                 self.diff.reset(&acquisitions);
                 self.relations.reset(revision.clone());
                 self.findings.reset(revision.clone());
+                self.report.reset(&acquisitions, revision.clone());
                 self.open = Some(OpenCaseView {
                     directory,
                     label,
@@ -1736,6 +1954,8 @@ impl AppState {
                     .map(|open| open.acquisitions.clone())
                     .unwrap_or_default();
                 self.diff.reset(&acquisitions);
+                let revision = self.timeline.revision.clone();
+                self.report.reset(&acquisitions, revision);
             }
             Outcome::Imported {
                 run_id,
@@ -1747,7 +1967,11 @@ impl AppState {
                 if self.case_database.is_some() {
                     self.timeline.reset(Some(run_id.clone()));
                     self.relations.reset(Some(run_id.clone()));
-                    self.findings.reset(Some(run_id));
+                    self.findings.reset(Some(run_id.clone()));
+                    self.report.revision = run_id;
+                    self.report.last = None;
+                    self.report.verification = None;
+                    self.report.status = "ready to export".into();
                 }
             }
             Outcome::Analyzed {
@@ -1807,10 +2031,70 @@ impl AppState {
                 let requests = self.timeline.reload_views();
                 self.pending_queries.extend(requests);
             }
+            Outcome::ReportPublished {
+                report_id,
+                directory,
+                json,
+                html,
+                objects,
+                events,
+                gaps,
+            } => {
+                self.job.message = format!("report {report_id} published");
+                self.notice_info(format!(
+                    "report {report_id} published: {objects} object(s), {events} event(s), {gaps} gap(s)"
+                ));
+                self.report.status = format!("published {report_id}");
+                self.report.last = Some(ReportSummary {
+                    report_id,
+                    directory,
+                    json,
+                    html,
+                    objects,
+                    events,
+                    gaps,
+                });
+            }
+            Outcome::ReportCancelled => {
+                self.job.message = "report cancelled".into();
+                self.notice_info("report cancelled; nothing was published");
+                self.report.status = "cancelled; nothing was published".into();
+            }
+            Outcome::Verified {
+                manifest_id,
+                acquisition_id,
+                format,
+                objects,
+                total_bytes,
+                captured,
+                gaps,
+            } => {
+                self.job.message = format!("manifest {manifest_id} verified");
+                self.notice_info(format!(
+                    "manifest {manifest_id} verified: {objects} object(s), {total_bytes} byte(s)"
+                ));
+                self.report.verifying = false;
+                self.report.status = format!(
+                    "manifest {manifest_id} verified: {objects} stored object(s) match their recorded digests"
+                );
+                self.report.verification = Some(VerifySummary {
+                    manifest_id,
+                    acquisition_id,
+                    format,
+                    objects,
+                    total_bytes,
+                    captured,
+                    gaps,
+                });
+            }
         }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        if self.applied_theme != Some(self.theme) {
+            ui.ctx().set_visuals(self.theme.visuals());
+            self.applied_theme = Some(self.theme);
+        }
         egui::Panel::top("ghosttrace-header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("GhostTrace");
@@ -1825,6 +2109,15 @@ impl AppState {
                         ui.label("No case open");
                     }
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    egui::ComboBox::from_label("Appearance")
+                        .selected_text(self.theme.label())
+                        .show_ui(ui, |ui| {
+                            for choice in ThemeChoice::ALL {
+                                ui.selectable_value(&mut self.theme, choice, choice.label());
+                            }
+                        });
+                });
             });
             ui.horizontal(|ui| {
                 if ui
@@ -1884,6 +2177,16 @@ impl AppState {
                         self.notice_error("open or create a case before reviewing findings");
                     }
                 }
+                if ui
+                    .selectable_label(self.screen == Screen::Report, "Report and verify")
+                    .clicked()
+                {
+                    if self.open.is_some() {
+                        self.screen = Screen::Report;
+                    } else {
+                        self.notice_error("open or create a case before exporting a report");
+                    }
+                }
             });
         });
 
@@ -1922,6 +2225,7 @@ impl AppState {
                 Screen::Diff => crate::diff::ui(self, ui),
                 Screen::Relations => crate::relations::ui(self, ui),
                 Screen::Findings => crate::findings::ui(self, ui),
+                Screen::Report => crate::report::ui(self, ui),
             }
         });
     }

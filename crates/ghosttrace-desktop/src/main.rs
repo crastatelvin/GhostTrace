@@ -13,17 +13,24 @@ const DEFAULT_RENDERER: Renderer = Renderer::Glow;
 #[cfg(all(not(feature = "glow"), feature = "wgpu"))]
 const DEFAULT_RENDERER: Renderer = Renderer::Wgpu;
 
+enum Run {
+    Launch(Options),
+    /// Print the build identity and exit. Packaging smoke tests use this.
+    Version,
+}
+
 struct Options {
     renderer: Renderer,
 }
 
-fn parse_args() -> Result<Options, String> {
+fn parse_args() -> Result<Run, String> {
     let mut args = std::env::args().skip(1);
     let mut options = Options {
         renderer: DEFAULT_RENDERER,
     };
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--version" | "-V" => return Ok(Run::Version),
             "--renderer" => {
                 options.renderer = match args.next().as_deref() {
                     #[cfg(feature = "glow")]
@@ -36,12 +43,16 @@ fn parse_args() -> Result<Options, String> {
             other => return Err(format!("unknown argument: {other}")),
         }
     }
-    Ok(options)
+    Ok(Run::Launch(options))
 }
 
 fn main() -> eframe::Result<()> {
     let options = match parse_args() {
-        Ok(options) => options,
+        Ok(Run::Version) => {
+            println!("ghosttrace-desktop {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Ok(Run::Launch(options)) => options,
         Err(message) => {
             eprintln!("error: {message}");
             // Exit 2 = invalid usage, per the CLI exit-code policy.

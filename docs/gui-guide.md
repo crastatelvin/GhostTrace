@@ -1,10 +1,11 @@
-# Desktop guide (P6.3)
+# Desktop guide (P6.4)
 
 The desktop application is a native egui/eframe shell over the same
 `ghosttrace-core` service the CLI uses. P6.1 covers the case and evidence
 workflow; P6.2 adds the timeline, histogram, and provenance inspector; P6.3
-adds snapshot comparison, relationships, findings, notes, and saved views.
-Reports and the completion gate arrive in P6.4.
+adds snapshot comparison, relationships, findings, notes, and saved views; P6.4
+adds unredacted report export, manifest verification, and three appearance
+palettes, completing the desktop workflow.
 
 ```bash
 cargo run -p ghosttrace-desktop
@@ -120,6 +121,37 @@ the job line.
   restores those fields and re-runs the shared query path; stored views never
   contain SQL or an expression.
 
+**Report and verification screen**
+
+- Export the recorded report for one acquisition and revision through the same
+  `reports::build_report`/`publish` path the CLI uses. The screen states the
+  case label, display time zone, chosen acquisition, revision, and event limit
+  before the button.
+- **P6.4 exports unredacted reports.** Recorded values are included as stored;
+  the redaction selection/preview workflow arrives with P9.2. The screen says
+  this above the export control, not only in documentation.
+- The destination must be an absolute path outside the case directory; an empty,
+  relative, or in-case destination is refused with a visible reason before a job
+  starts. A failed publication (for example an existing report id) stays on
+  screen as `export failed: <code>: <message>`.
+- Export is a job, so it appears in the job bar with the shared Cancel control.
+  A cancel that arrives before the job starts publishes nothing.
+- "Verify manifest" re-hashes every stored object of the latest (or chosen)
+  acquisition manifest and compares it with the recorded digest. The result
+  shows manifest id, acquisition, format, object count, bytes, captured count,
+  and coverage gaps; a mismatch fails the job with its code instead of a
+  success-shaped result.
+
+**Appearance**
+
+- Dark (default), Light, and High contrast palettes, chosen in the header. High
+  contrast uses a black background, white text, opaque selection, and thicker
+  widget strokes so focus and selection never depend on hue alone. The choice
+  is per session; no configuration file is written.
+- Every screen has an explicit empty state (no case, no capture, no parse run,
+  no findings, no relationships), a loading state on the job/query bar, and a
+  failure state that keeps the error code and message visible.
+
 ## Architecture
 
 - `state.rs` — pure UI state and the command/result reducer. `apply()` drops
@@ -136,8 +168,8 @@ the job line.
   counters. `apply_query()` ignores superseded results and keeps failures
   actionable.
 - `cases.rs`, `import.rs`, `timeline.rs`, `evidence.rs`, `diff.rs`,
-  `relations.rs`, `findings.rs` — screens. They only mutate state and queue
-  requests.
+  `relations.rs`, `findings.rs`, `report.rs` — screens. They only mutate state
+  and queue requests.
 - `app.rs` — `eframe::App`: `logic` drains job and query results, applies
   cancels, sends commands and queries; `ui` only draws. No SQLite or evidence
   access happens in a render callback.
@@ -160,9 +192,14 @@ that uncertainty appears in words. `tests/desktop_analysis.rs` covers diff
 scope/unknown visibility and paging, findings dispositions, event notes and
 bookmarks, saved views, and the analysis/correlation commands.
 `tests/desktop_graph_limits.rs` covers the graph node/edge caps, keyset
-expansion, keyboard selection, and the accessible edge names. Because a running job animates its progress
-bar, those tests step a fixed number of frames instead of waiting for the UI to
-settle.
+expansion, keyboard selection, and the accessible edge names.
+`tests/desktop_report.rs` covers the stated export scope and time zone,
+destination validation, published/verified summaries, a failed publication,
+and a pre-registered cancel that publishes nothing. `tests/desktop_jobs.rs`
+also runs the real report export, manifest verification, and duplicate-report
+refusal through the worker, and reopens the case to exercise the acquisition
+query. Because a running job animates its progress bar, those tests step a
+fixed number of frames instead of waiting for the UI to settle.
 
 ### Responsiveness (measured, not asserted from design)
 
@@ -204,6 +241,10 @@ silently.
   a very large comparison repeats that work; it is a manual, explicit action.
 - Relationships are derived over every recorded entity, not per revision; the
   revision is stated where it applies, and a link's support names its events.
+- Report export is unredacted until P9.2; do not hand a report to a third party
+  without reviewing its recorded values.
+- Report paging is bounded by the event limit you choose (default 500, maximum
+  10,000 in the UI). The report states the limit in its provenance.
 - Screen-reader verification on the release targets is a P10 gate. The earlier
   Orca smoke test failed on rootless Xwayland with an XKB error; that is an
   environment limitation, not an accessibility certification

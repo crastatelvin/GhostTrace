@@ -26,6 +26,8 @@ use ghosttrace_core::domain::case::AcquisitionMethod;
 use ghosttrace_core::domain::path::NativePath;
 use ghosttrace_core::error::{CoreError, CoreResult};
 use ghosttrace_core::ingest::{ImportRequest, LogFormat, run_import};
+use ghosttrace_core::integrity::manifest::ManifestV1;
+use ghosttrace_core::reports::{self, ReportContext, ReportSelection};
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
 
 use crate::state::{AcquisitionSummary, RecoveryItem};
@@ -44,6 +46,8 @@ pub enum JobPhase {
     Correlate,
     Annotate,
     SaveView,
+    Report,
+    Verify,
 }
 
 impl JobPhase {
@@ -57,6 +61,8 @@ impl JobPhase {
             JobPhase::Correlate => "derive relationships",
             JobPhase::Annotate => "record note",
             JobPhase::SaveView => "save view",
+            JobPhase::Report => "export report",
+            JobPhase::Verify => "verify manifest",
         }
     }
 }
@@ -117,6 +123,24 @@ pub enum Command {
         name: String,
         filter: SavedFilter,
     },
+    /// Export the recorded report for one acquisition. P6.4 exports
+    /// unredacted reports; the redaction workflow arrives with P9.2.
+    Report {
+        id: JobId,
+        case_directory: String,
+        output: String,
+        acquisition_id: Option<String>,
+        revision: Option<String>,
+        event_limit: u32,
+        report_id: Option<String>,
+    },
+    /// Verify the stored bytes of one acquisition manifest.
+    Verify {
+        id: JobId,
+        case_directory: String,
+        manifest_path: Option<String>,
+        acquisition_id: Option<String>,
+    },
 }
 
 impl Command {
@@ -129,7 +153,9 @@ impl Command {
             | Command::Analyze { id, .. }
             | Command::Correlate { id, .. }
             | Command::Annotate { id, .. }
-            | Command::SaveView { id, .. } => *id,
+            | Command::SaveView { id, .. }
+            | Command::Report { id, .. }
+            | Command::Verify { id, .. } => *id,
         }
     }
 
@@ -143,6 +169,8 @@ impl Command {
             Command::Correlate { .. } => JobPhase::Correlate,
             Command::Annotate { .. } => JobPhase::Annotate,
             Command::SaveView { .. } => JobPhase::SaveView,
+            Command::Report { .. } => JobPhase::Report,
+            Command::Verify { .. } => JobPhase::Verify,
         }
     }
 }
@@ -196,6 +224,26 @@ pub enum Outcome {
     },
     ViewSaved {
         name: String,
+    },
+    ReportPublished {
+        report_id: String,
+        directory: String,
+        json: String,
+        html: String,
+        objects: usize,
+        events: usize,
+        gaps: u64,
+    },
+    /// The report job observed a cancel request and published nothing.
+    ReportCancelled,
+    Verified {
+        manifest_id: String,
+        acquisition_id: String,
+        format: String,
+        objects: u64,
+        total_bytes: u64,
+        captured: u64,
+        gaps: u64,
     },
 }
 
@@ -396,6 +444,30 @@ fn worker(commands: Receiver<Command>, events: Sender<CommandEvent>, registry: A
                 filter,
                 ..
             } => save_view(&case_directory, &name, &filter),
+            Command::Report {
+                case_directory,
+                output,
+                acquisition_id,
+                revision,
+                event_limit,
+                report_id,
+                ..
+            } => export_report(
+                &registry,
+                id,
+                &case_directory,
+                &output,
+                acquisition_id,
+                revision,
+                event_limit,
+                report_id,
+            ),
+            Command::Verify {
+                case_directory,
+                manifest_path,
+                acquisition_id,
+                ..
+            } => verify_manifest(&case_directory, manifest_path, acquisition_id),
         };
         registry.finish(id);
         let event = match result {
@@ -625,12 +697,122 @@ fn save_view(case_directory: &str, name: &str, filter: &SavedFilter) -> CoreResu
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn export_report(
+    registry: &Registry,
+    id: JobId,
+    case_directory: &str,
+    output: &str,
+    acquisition_id: Option<String>,
+    revision: Option<String>,
+    event_limit: u32,
+    report_id: Option<String>,
+) -> CoreResult<Outcome> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    registry.register(
+        id,
+        CancelHandle {
+            copy: None,
+            import: Arc::clone(&cancelled),
+        },
+    );
+    // A cancel that arrived before the job started must publish nothing.
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(Outcome::ReportCancelled);
+    }
+    let (session, _open) = CaseSession::open(PathBuf::from(case_directory))?;
+    let reader = session.reader()?;
+    let context = ReportContext {
+        case_id: session.case_id().to_string(),
+        label: session.config().label.clone(),
+        display_timezone: session.config().display_timezone.clone(),
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        generated_by: "ghosttrace-desktop".to_string(),
+    };
+    let selection = ReportSelection {
+        acquisition_id,
+        revision,
+        event_limit,
+    };
+    let mut report = reports::build_report(&reader, &context, &selection)?;
+    if let Some(report_id) = report_id.filter(|id| !id.trim().is_empty()) {
+        if !report_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            || report_id.starts_with('.')
+        {
+            return Err(CoreError::InvalidInput(
+                "report id may only contain letters, digits, '-', '_' and '.'".into(),
+            ));
+        }
+        report.report_id = report_id;
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(Outcome::ReportCancelled);
+    }
+    let published = reports::publish(&report, Path::new(output))?;
+    Ok(Outcome::ReportPublished {
+        report_id: report.report_id.clone(),
+        directory: native_path(&published.directory).encoded(),
+        json: native_path(&published.json_path).encoded(),
+        html: native_path(&published.html_path).encoded(),
+        objects: report.objects.len(),
+        events: report.timeline.len(),
+        gaps: report.coverage.total_gaps(),
+    })
+}
+
+fn verify_manifest(
+    case_directory: &str,
+    manifest_path: Option<String>,
+    acquisition_id: Option<String>,
+) -> CoreResult<Outcome> {
+    let (session, _open) = CaseSession::open(PathBuf::from(case_directory))?;
+    let path = match manifest_path.filter(|path| !path.trim().is_empty()) {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let acquisition = match acquisition_id {
+                Some(id) => id,
+                None => {
+                    let reader = session.reader()?;
+                    list_acquisitions(&reader)?
+                        .into_iter()
+                        .next()
+                        .map(|summary| summary.acquisition_id)
+                        .ok_or_else(|| {
+                            CoreError::InvalidInput("no acquisition in this case".into())
+                        })?
+                }
+            };
+            session
+                .layout()
+                .manifests_root()
+                .join(format!("manifest-{acquisition}.json"))
+        }
+    };
+    let result = ManifestV1::verify_file(&path, session.layout().root())?;
+    Ok(Outcome::Verified {
+        manifest_id: result.manifest_id,
+        acquisition_id: result.acquisition_id,
+        format: result.format,
+        objects: result.objects_verified as u64,
+        total_bytes: result.total_bytes,
+        captured: result.captured,
+        gaps: result.gaps,
+    })
+}
+
 fn list_acquisitions(
     reader: &ghosttrace_core::storage::read::CaseReader,
 ) -> CoreResult<Vec<AcquisitionSummary>> {
     let mut statement = reader
         .connection()
-        .prepare("SELECT id, state FROM acquisitions ORDER BY created_seconds DESC, id LIMIT 50")
+        // `acquisitions` records `started_seconds`, not a created timestamp.
+        // Newest first, then id, matching the report builder's selection.
+        .prepare(
+            "SELECT id, state FROM acquisitions
+             ORDER BY started_seconds DESC, id LIMIT 50",
+        )
         .map_err(|error| CoreError::Storage(format!("prepare acquisitions: {error}")))?;
     let rows = statement
         .query_map([], |row| {
