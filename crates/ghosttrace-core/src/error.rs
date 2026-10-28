@@ -27,6 +27,8 @@ pub enum CoreError {
     SchemaIncompatible(String),
     /// Digest or signature verification failed (bytes differ from the record).
     IntegrityMismatch,
+    /// A concurrent edit moved state the caller based its change on.
+    Conflict(String),
     /// Unexpected internal condition; never used for known input problems.
     Internal(String),
 }
@@ -45,6 +47,7 @@ impl CoreError {
             CoreError::ResourceLimit => "resource_limit",
             CoreError::SchemaIncompatible(_) => "schema_incompatible",
             CoreError::IntegrityMismatch => "integrity_mismatch",
+            CoreError::Conflict(_) => "conflict",
             CoreError::Internal(_) => "internal_error",
         }
     }
@@ -57,6 +60,7 @@ impl CoreError {
             | CoreError::Permission(detail)
             | CoreError::Storage(detail)
             | CoreError::SchemaIncompatible(detail)
+            | CoreError::Conflict(detail)
             | CoreError::Internal(detail) => detail,
             _ => "",
         }

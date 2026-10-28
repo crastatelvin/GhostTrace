@@ -76,6 +76,7 @@ impl Adapter {
         };
 
         let mut record = ParsedRecord {
+            mapped_json: None,
             locator: locator.to_string(),
             locator_kind: "byte_range",
             raw_json: Some(serde_json::Value::Object(header.raw_fields()).to_string()),
@@ -101,8 +102,9 @@ impl Adapter {
         };
 
         if let Some(message) = header.message.as_deref()
-            && let Some((kind, summary)) = auth_event(header.app.as_deref(), message)
+            && let Some((kind, summary, mapped)) = auth_event(header.app.as_deref(), message)
         {
+            record.mapped_json = mapped;
             record.event = Some(EventDraft {
                 kind,
                 summary,
@@ -425,8 +427,22 @@ fn nil_value(value: &str) -> Option<String> {
 }
 
 /// Tested authentication outcomes only. Everything else stays raw.
-fn auth_event(app: Option<&str>, message: &str) -> Option<(String, String)> {
+///
+/// The mapped JSON is the adapter's documented interpretation (account,
+/// service, outcome, and source as recorded by the parser). It is stored apart
+/// from the raw fields so the two are never confused.
+fn auth_event(app: Option<&str>, message: &str) -> Option<(String, String, Option<String>)> {
     let app = app.unwrap_or_default();
+    let mapped = |user: &str, outcome: &str, source: Option<&str>| {
+        let mut fields = serde_json::Map::new();
+        fields.insert("user".into(), user.into());
+        fields.insert("service".into(), app.into());
+        fields.insert("outcome".into(), outcome.into());
+        if let Some(source) = source {
+            fields.insert("src_ip".into(), source.into());
+        }
+        Some(serde_json::Value::Object(fields).to_string())
+    };
     if app.starts_with("sshd") {
         if let Some(rest) = message.strip_prefix("Accepted ") {
             let method = token(Some(rest))?;
@@ -438,6 +454,7 @@ fn auth_event(app: Option<&str>, message: &str) -> Option<(String, String)> {
                     Some(source) => format!("sshd accepted {method} for {user} from {source}"),
                     None => format!("sshd accepted {method} for {user}"),
                 },
+                mapped(user, "success", source),
             ));
         }
         if let Some(rest) = message
@@ -452,6 +469,7 @@ fn auth_event(app: Option<&str>, message: &str) -> Option<(String, String)> {
                     Some(source) => format!("sshd failed password for {user} from {source}"),
                     None => format!("sshd failed password for {user}"),
                 },
+                mapped(user, "failure", source),
             ));
         }
     }
@@ -464,6 +482,9 @@ fn auth_event(app: Option<&str>, message: &str) -> Option<(String, String)> {
             } else {
                 format!("sudo command by {user}")
             },
+            (!user.is_empty())
+                .then(|| mapped(user, "command", None))
+                .flatten(),
         ));
     }
     None

@@ -13,6 +13,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use ghosttrace_core::analysis::diff::{DiffQuery, DiffReport, compare_acquisitions};
+use ghosttrace_core::analysis::rules::{AnalysisRequest, RuleConfig};
 use ghosttrace_core::capture::copy::{
     AcquisitionOptions, CopyProgress, inspect_recovery, run_acquisition,
 };
@@ -115,6 +116,32 @@ pub enum Cli {
  recorded (or the run was cancelled), and 1/2 mean the import did not run."
     )]
     Import(ImportArgs),
+    /// Evaluate the five compiled rules against a recorded revision.
+    #[command(
+        long_about = "Evaluate the five compiled rules against one recorded revision.\
+\n\nEvery finding names its rule version, the recorded events it used, the exact\
+ predicates, the counts behind the decision, and the alternatives that remain\
+ plausible. Rules with missing prerequisites report `not_evaluated` with a\
+ reason instead of producing a guess. The outside-hours rule stays disabled\
+ until --rules supplies an explicit schedule baseline. There is no script\
+ engine and no maliciousness score.\n\nExit 0 means the run completed, 3 means\
+ a bound truncated the pass, and 2 means the rule parameters were invalid."
+    )]
+    Analyze(AnalyzeArgs),
+}
+
+#[derive(Args)]
+pub struct AnalyzeArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Revision (parse run) to analyze; defaults to the newest revision.
+    #[arg(long)]
+    pub revision: Option<String>,
+    /// Bounded TOML rule parameters (unknown fields and out-of-range values
+    /// are rejected).
+    #[arg(long)]
+    pub rules: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -536,6 +563,56 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Verify(args) => verify(args),
         Cli::Report(args) => report(args),
         Cli::Import(args) => import(args),
+        Cli::Analyze(args) => analyze(args),
+    }
+}
+
+fn analyze(args: AnalyzeArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    let reader = match session.reader() {
+        Ok(reader) => reader,
+        Err(error) => return fail(&error),
+    };
+    let revision = match args.revision {
+        Some(revision) => revision,
+        None => match reader.latest_revision(None) {
+            Ok(Some(revision)) => revision,
+            Ok(None) => {
+                output::emit_error(
+                    "invalid_usage",
+                    "this case has no parse run yet; import an object or scan the case first",
+                );
+                return EXIT_USAGE;
+            }
+            Err(error) => return fail(&error),
+        },
+    };
+    let config = match args.rules {
+        Some(path) => {
+            let parsed = std::fs::read_to_string(&path)
+                .map_err(|error| {
+                    CoreError::InvalidInput(format!("read rule config {}: {error}", path.display()))
+                })
+                .and_then(|text| RuleConfig::from_toml(&text));
+            match parsed {
+                Ok(config) => config,
+                Err(error) => return fail_input(&error),
+            }
+        }
+        None => RuleConfig::default(),
+    };
+    let report = match session.analyze(&AnalysisRequest { revision, config }) {
+        Ok(report) => report,
+        Err(error) => return fail_input(&error),
+    };
+    output::emit_json(&report);
+    if report.state == "partial" {
+        EXIT_PARTIAL
+    } else {
+        EXIT_OK
     }
 }
 
@@ -1256,6 +1333,16 @@ fn format_cursor(cursor: TimeCursor) -> String {
 fn fail(error: &CoreError) -> u8 {
     output::emit_error(error.code(), &error.to_string());
     EXIT_FAILED
+}
+
+/// Rejected user input (parameters, paths, bounds) is a usage error, not an
+/// internal failure. Storage and integrity problems stay exit 1.
+fn fail_input(error: &CoreError) -> u8 {
+    output::emit_error(error.code(), &error.to_string());
+    match error {
+        CoreError::InvalidInput(_) => EXIT_USAGE,
+        _ => EXIT_FAILED,
+    }
 }
 
 /// The plan requires the trade-off to be visible where the choice is made.

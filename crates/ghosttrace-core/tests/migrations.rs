@@ -24,7 +24,7 @@ fn fresh_case_applies_schema_and_records_checksum() {
     let dir = tempfile::tempdir().unwrap();
     let connection = fresh_database(dir.path());
     let created = migrate::create_schema(&connection).unwrap();
-    assert_eq!(created.applied.len(), 4);
+    assert_eq!(created.applied.len(), 5);
     assert_eq!(created.applied[0].name, "0001_case");
     assert_eq!(created.applied[0].checksum, MIGRATIONS[0].checksum());
     assert_eq!(created.applied[1].name, "0002_file_times");
@@ -33,6 +33,8 @@ fn fresh_case_applies_schema_and_records_checksum() {
     assert_eq!(created.applied[2].checksum, MIGRATIONS[2].checksum());
     assert_eq!(created.applied[3].name, "0004_analysis");
     assert_eq!(created.applied[3].checksum, MIGRATIONS[3].checksum());
+    assert_eq!(created.applied[4].name, "0005_findings");
+    assert_eq!(created.applied[4].checksum, MIGRATIONS[4].checksum());
     assert!(created.backup.is_none(), "a new empty case needs no backup");
     let reopened = migrate::migrate(&connection, None).unwrap();
     assert!(reopened.applied.is_empty(), "nothing pending on reopen");
@@ -42,7 +44,7 @@ fn fresh_case_applies_schema_and_records_checksum() {
 #[test]
 fn embedded_migrations_are_ordered_and_checksum_stable() {
     let versions: Vec<u32> = MIGRATIONS.iter().map(|m| m.version).collect();
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
     assert_eq!(MIGRATIONS[0].checksum(), MIGRATIONS[0].checksum());
     assert!(MIGRATIONS[0].sql.contains("CREATE TABLE"));
     assert!(MIGRATIONS[1].sql.contains("ALTER TABLE file_observations"));
@@ -56,6 +58,9 @@ fn embedded_migrations_are_ordered_and_checksum_stable() {
     // Analysis links each event to its source and keeps replay idempotent.
     assert!(MIGRATIONS[3].sql.contains("events ADD COLUMN evidence_id"));
     assert!(MIGRATIONS[3].sql.contains("CREATE UNIQUE INDEX"));
+    // Findings, review history, and saved views (P5.2).
+    assert!(MIGRATIONS[4].sql.contains("counts_json"));
+    assert!(MIGRATIONS[4].sql.contains("saved_views"));
 }
 
 #[test]

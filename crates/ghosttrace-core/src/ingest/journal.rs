@@ -116,6 +116,7 @@ impl<'a, R: BufRead> Reader<'a, R> {
                 ));
                 self.drain_entry()?;
                 return Ok(ParsedRecord {
+                    mapped_json: None,
                     locator,
                     locator_kind: "byte_range",
                     raw_json: None,
@@ -133,6 +134,7 @@ impl<'a, R: BufRead> Reader<'a, R> {
                 ));
                 self.drain_entry()?;
                 return Ok(ParsedRecord {
+                    mapped_json: None,
                     locator,
                     locator_kind: "byte_range",
                     raw_json: None,
@@ -146,6 +148,7 @@ impl<'a, R: BufRead> Reader<'a, R> {
                     diagnostics.push(diagnostic(code, &detail));
                     self.drain_entry()?;
                     return Ok(ParsedRecord {
+                        mapped_json: None,
                         locator,
                         locator_kind: "byte_range",
                         raw_json: None,
@@ -420,6 +423,7 @@ fn build_record(
     }
 
     ParsedRecord {
+        mapped_json: None,
         locator,
         locator_kind: "byte_range",
         raw_json: Some(raw_json),
@@ -605,6 +609,7 @@ fn diagnostic(code: &str, detail: &str) -> ImportDiagnostic {
 
 fn skipped(locator: String, diagnostic: ImportDiagnostic) -> ParsedRecord {
     ParsedRecord {
+        mapped_json: None,
         locator,
         locator_kind: "byte_range",
         raw_json: None,

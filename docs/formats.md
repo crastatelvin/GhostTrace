@@ -290,3 +290,35 @@ always a candidate, and equal digests always mean equal bytes only.
 - Rollback-journal browser packages, interpreted virtual tables/views, and
   guessing a browser family or missing sidecar from partial evidence.
 - Executing or importing browser download contents; only metadata is read.
+
+## Rule parameters (P5.2)
+
+`ghosttrace analyze --rules <file.toml>` accepts one bounded TOML document.
+Sections and keys are fixed; `deny_unknown_fields` and range checks apply, so a
+misspelled key fails instead of falling back to a default.
+
+```toml
+[auth.fail_then_success]
+failures = 5            # 1..=100
+window_seconds = 600    # 1..=86_400
+
+[process.download_then_execute]
+window_seconds = 900    # 1..=86_400
+
+[time.clock_discontinuity]
+threshold_seconds = 2   # 0..=86_400
+
+[activity.outside_declared_hours]
+timezone = "Europe/Berlin"   # IANA zone, required
+weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+start = "09:00"              # inclusive
+end = "17:00"                # exclusive
+holidays = ["2026-12-24"]    # optional, outside the schedule entirely
+```
+
+Absent sections use the documented defaults. The schedule has no default:
+without `timezone`, `weekdays`, `start`, and `end` the outside-hours rule stays
+`not_evaluated`. There are no expressions, patterns, scripts, or per-record
+predicates — a parameter changes thresholds and windows, never logic. The
+effective configuration digest is recorded with the analysis run, so a finding
+can be reproduced from its revision and parameter set.

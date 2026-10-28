@@ -159,3 +159,30 @@ Opening a case collects and reports what the linked SQLite runtime actually
 is (`storage::StorageDiagnostics`): library version, foreign-key enforcement,
 journal mode (WAL), `synchronous`, and page size — recorded, never assumed.
 `docs/releases.md` carries the platform evidence these are checked against.
+
+## Findings, review history, and saved views
+
+- `analysis_runs` holds one row per (revision, rules version, config digest).
+  `counts_json` records every rule's status, reason, findings, considered and
+  excluded counts, and truncation flag, so a run that decided nothing is still
+  explainable. Replaying the same inputs rewrites the same run id.
+- `findings` holds one row per deterministic finding id, with the rule version,
+  sorted supporting event ids, exact predicates, severity, rationale, and
+  alternatives. Indexes `findings_by_run_rule` and `findings_by_rule` serve the
+  two read directions. `findings.disposition` is the evaluator's initial
+  `undismissed` value and is never rewritten by analysis.
+- `annotation_revisions` is append-only: each row names `previous_revision`,
+  its author label, bounded text, a JSON tag list, and an optional disposition.
+  An edit whose `previous_revision` is no longer the tip fails with `conflict`
+  (exit `1`) and writes nothing. The newest non-null disposition for a target
+  is the current one; findings are read with that value overlaid, so
+  re-analysis reports the analyst's state.
+- `saved_views` stores a name and a `filter_json` value set. The JSON is parsed
+  with `deny_unknown_fields` on read as well as write: a view from a build with
+  a different field set fails with `invalid_request` instead of silently
+  dropping a criterion.
+- Migration `0005_findings` is additive: `analysis_runs.counts_json`,
+  `raw_observations.mapped_fields_json`, the finding/review indexes, and
+  `saved_views`. `mapped_fields_json` keeps adapter interpretation next to, not
+  inside, the recorded raw fields; `NULL` means "mapped nothing", never
+  "mapped and empty".

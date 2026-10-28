@@ -895,11 +895,11 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P5.1 edges and Section 11 prerequisites. **Produces:** Versioned findings/analysis runs, notes/tags/dispositions, saved queries.
 
-- [ ] Test every built-in rule's positive, negative, boundary-window, missing prerequisite, ambiguous-time, and false-positive explanation cases.
-- [ ] Test outside-hours rule is disabled without explicit baseline and process/download rule is not evaluated without supported identifiers.
-- [ ] Implement five compiled rules with fixed metadata/validated parameters; record exact predicates/events/alternatives and counts.
-- [ ] Test note edit conflicts, revision history, tagging, saved filter compatibility, and dismissed finding preservation across new runs.
-- [ ] Commit: `feat: add explainable anomaly findings and analyst review history`.
+- [x] Test every built-in rule's positive, negative, boundary-window, missing prerequisite, ambiguous-time, and false-positive explanation cases.
+- [x] Test outside-hours rule is disabled without explicit baseline and process/download rule is not evaluated without supported identifiers.
+- [x] Implement five compiled rules with fixed metadata/validated parameters; record exact predicates/events/alternatives and counts.
+- [x] Test note edit conflicts, revision history, tagging, saved filter compatibility, and dismissed finding preservation across new runs.
+- [x] Commit: `feat: add explainable anomaly findings and analyst review history`.
 
 **Gate:** Each finding can be reproduced from recorded input versions/config and navigated back to raw records. No output describes an uncalibrated percentage as maliciousness probability.
 
@@ -1115,7 +1115,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P4 | P4.3 | Browser history/WAL/schema support | [x] |
 | P4 | P4.4 | FTS and time revisions | [x] |
 | P5 | P5.1 | Scoped entities/relationships | [x] |
-| P5 | P5.2 | Explainable rules/notes/views | [ ] |
+| P5 | P5.2 | Explainable rules/notes/views | [x] |
 | P6 | P6.1 | Desktop case/import | [ ] |
 | P6 | P6.2 | Desktop timeline/provenance | [ ] |
 | P6 | P6.3 | Desktop analysis/notes | [ ] |

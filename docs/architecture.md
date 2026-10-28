@@ -286,3 +286,56 @@ rules compare only entities whose event times are within `window_seconds`
 `unsupported_time` and never treated as inside or outside the window.
 `query_relationships` is a keyset read (page size clamped to 1..=1 000)
 filterable by endpoint, kind, and rule.
+
+## Findings and review section (P5.2)
+
+`CaseSession::analyze` evaluates five compiled rules over one parse run and
+records an `analysis_runs` row plus its findings. There is no script engine, no
+plugin loading, and no free-form expression: a rule is Rust code with a fixed
+id and version, and its parameters are a validated typed value set.
+
+| Rule | Version | Severity | Basis |
+|---|---|---|---|
+| `auth.fail_then_success` | 1 | medium | N failures for the same host/user/service followed by a success within a window |
+| `process.download_then_execute` | 1 | medium | a download and an execution naming the same path or digest inside a window |
+| `file.hash_changed_metadata_equal` | 1 | low | two captures of one path with equal size and source mtime but different full SHA-256 |
+| `time.clock_discontinuity` | 1 | info | realtime and boot-monotonic time disagree across two samples in one clock domain |
+| `activity.outside_declared_hours` | 1 | info | activity outside an investigator-declared schedule |
+
+Every finding stores the rule id and version, the sorted supporting event ids,
+the exact predicates that held (as recorded values), the severity, a
+rationale, and the alternatives that remain plausible. Severity is a handling
+priority; no field expresses a probability of maliciousness, and no output is
+allowed to describe one. `Finding` has no numeric score at all.
+
+Rules read only documented adapter fields, through the mapped fields the
+adapter recorded (`raw_observations.mapped_fields_json`) and then the raw
+fields. Free text is never parsed into an account, path, or address, so a log
+message cannot manufacture a finding input.
+
+Missing prerequisites are reported, never guessed. A rule with nothing to
+compare returns `not_evaluated` with a reason and the counts it did see
+(`events_considered`, `excluded`). `activity.outside_declared_hours` is
+disabled until a baseline is supplied; `process.download_then_execute`
+reports `not_evaluated` when no execution event carries a path or digest.
+Unresolved or ambiguous times are counted as excluded rather than ordered.
+
+Identity is reproducible. `analysis_runs.id` is derived from the input
+revision, the rules id/version, and the configuration digest; a finding id is
+derived from the rule id/version, the revision, the config digest, the sorted
+event ids, and the canonical predicates. Re-running the same inputs therefore
+rewrites the same rows instead of accumulating near-duplicates, and a changed
+parameter produces a distinct run.
+
+Analyst state lives in append-only `annotation_revisions`, not on the finding
+row. A note edit names the revision it supersedes; a stale name is a
+`conflict` error instead of a silent overwrite. Dispositions (confirmed,
+dismissed, commented) are read back as the newest recorded disposition, so a
+new analysis run cannot destroy a dismissal and the evaluator's initial
+`undismissed` row stays untouched.
+
+Saved views (`analysis::views`) are named, validated filter values: optional
+kind/host/source, validated search text, time bounds, the unresolved view, and
+a bounded page limit. Unknown fields are rejected on write and on read, and a
+stored view runs through the same `query_events`/`search_events` path as the
+CLI, so a view can never become SQL.

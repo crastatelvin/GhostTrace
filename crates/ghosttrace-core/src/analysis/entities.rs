@@ -118,6 +118,7 @@ struct EventRow {
     host_claim: Option<String>,
     evidence_id: Option<String>,
     raw_fields: Option<String>,
+    mapped_fields: Option<String>,
     path_kind: Option<String>,
     path_encoded: Option<String>,
     digest: Option<Vec<u8>>,
@@ -160,6 +161,7 @@ pub fn build_entities(
         .connection()
         .prepare(
             "SELECT e.id, e.kind, e.host_claim, e.evidence_id, r.raw_fields_json,
+                    r.mapped_fields_json,
                     o.native_path_kind, o.native_path_encoded, o.sha256, o.digest_status
              FROM events e
              LEFT JOIN raw_observations r
@@ -189,10 +191,11 @@ pub fn build_entities(
             host_claim: row.get(2).map_err(storage_error)?,
             evidence_id: row.get(3).map_err(storage_error)?,
             raw_fields: row.get(4).map_err(storage_error)?,
-            path_kind: row.get(5).map_err(storage_error)?,
-            path_encoded: row.get(6).map_err(storage_error)?,
-            digest: row.get(7).map_err(storage_error)?,
-            digest_status: row.get(8).map_err(storage_error)?,
+            mapped_fields: row.get(5).map_err(storage_error)?,
+            path_kind: row.get(6).map_err(storage_error)?,
+            path_encoded: row.get(7).map_err(storage_error)?,
+            digest: row.get(8).map_err(storage_error)?,
+            digest_status: row.get(9).map_err(storage_error)?,
         };
         report.events += 1;
         if observed.evidence_id.is_none() {
@@ -284,12 +287,27 @@ fn entities_for(row: &EventRow, acquisition: &str) -> Vec<EntityRow> {
         ));
     }
     let host_scope = host.unwrap_or_else(|| "unscoped".to_string());
-    if let Some(fields) = row
+    let raw = row
         .raw_fields
         .as_deref()
-        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|text| serde_json::from_str::<Value>(text).ok());
+    let mapped = row
+        .mapped_fields
+        .as_deref()
+        .and_then(|text| serde_json::from_str::<Value>(text).ok());
     {
-        if let Some(user) = first_field(&fields, USER_FIELDS, MAX_FIELD_CHARS) {
+        // Adapter-mapped fields (an explicit interpretation) win over raw
+        // fields; raw fields are the fallback, never free text.
+        let field = |names: &[&str], limit: usize| {
+            mapped
+                .as_ref()
+                .and_then(|fields| first_field(fields, names, limit))
+                .or_else(|| {
+                    raw.as_ref()
+                        .and_then(|fields| first_field(fields, names, limit))
+                })
+        };
+        if let Some(user) = field(USER_FIELDS, MAX_FIELD_CHARS) {
             found.push(EntityRow::new(
                 EntityKind::User,
                 vec![
@@ -302,7 +320,7 @@ fn entities_for(row: &EventRow, acquisition: &str) -> Vec<EntityRow> {
                 user,
             ));
         }
-        if let Some(ip) = first_field(&fields, IP_FIELDS, MAX_FIELD_CHARS) {
+        if let Some(ip) = field(IP_FIELDS, MAX_FIELD_CHARS) {
             found.push(EntityRow::new(
                 EntityKind::Ip,
                 vec!["host".into(), host_scope.clone(), "ip".into(), ip.clone()],
@@ -310,11 +328,10 @@ fn entities_for(row: &EventRow, acquisition: &str) -> Vec<EntityRow> {
                 ip,
             ));
         }
-        if let Some(pid) = first_field(&fields, PID_FIELDS, MAX_FIELD_CHARS)
+        if let Some(pid) = field(PID_FIELDS, MAX_FIELD_CHARS)
             && pid.bytes().all(|byte| byte.is_ascii_digit())
         {
-            let boot = first_field(&fields, BOOT_FIELDS, MAX_FIELD_CHARS)
-                .unwrap_or_else(|| "no-boot".to_string());
+            let boot = field(BOOT_FIELDS, MAX_FIELD_CHARS).unwrap_or_else(|| "no-boot".to_string());
             found.push(EntityRow::new(
                 EntityKind::Process,
                 vec![
@@ -328,7 +345,7 @@ fn entities_for(row: &EventRow, acquisition: &str) -> Vec<EntityRow> {
                 pid,
             ));
         }
-        if let Some(path) = first_field(&fields, PATH_FIELDS, MAX_PATH_CHARS) {
+        if let Some(path) = field(PATH_FIELDS, MAX_PATH_CHARS) {
             found.push(EntityRow::new(
                 EntityKind::Path,
                 vec![
@@ -341,10 +358,7 @@ fn entities_for(row: &EventRow, acquisition: &str) -> Vec<EntityRow> {
                 path,
             ));
         }
-        if let Some(digest) = first_field(&fields, DIGEST_FIELDS, 128)
-            .as_deref()
-            .and_then(digest_value)
-        {
+        if let Some(digest) = field(DIGEST_FIELDS, 128).as_deref().and_then(digest_value) {
             found.push(digest_entity(&digest));
         }
     }

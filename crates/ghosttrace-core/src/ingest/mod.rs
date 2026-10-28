@@ -797,6 +797,9 @@ pub(crate) struct ParsedRecord {
     pub locator: String,
     pub locator_kind: &'static str,
     pub raw_json: Option<String>,
+    /// Adapter-mapped structured fields (an interpretation of the record),
+    /// kept apart from `raw_json`. `None` means the adapter mapped nothing.
+    pub mapped_json: Option<String>,
     pub event: Option<EventDraft>,
     pub diagnostics: Vec<ImportDiagnostic>,
 }
@@ -814,6 +817,7 @@ impl ParsedRecord {
             locator: locator.to_string(),
             locator_kind: "byte_range",
             raw_json: None,
+            mapped_json: None,
             event: None,
             diagnostics: vec![ImportDiagnostic {
                 code: code.to_string(),
@@ -861,6 +865,7 @@ impl Committer<'_> {
                 locator_kind: parsed.locator_kind,
                 locator_identity: parsed.locator.clone(),
                 raw_fields_json: raw_json,
+                mapped_fields_json: parsed.mapped_json.clone(),
             });
         }
         for diagnostic in &parsed.diagnostics {

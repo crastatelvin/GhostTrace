@@ -128,3 +128,15 @@ file records implemented capability only.
   edge budget, and temporal windows with skipped/truncated/untimed counts;
   keyset `query_relationships`; migration 0004 links events to their source
   record (`docs/architecture.md`, `docs/storage.md`, `docs/formats.md`).
+- P5.2 (2026-10-28): explainable findings and analyst review history — five
+  compiled rules with fixed ids/versions and validated TOML parameters
+  (unknown keys and out-of-range values rejected), each finding storing its
+  supporting event ids, exact predicates, severity, rationale, and remaining
+  alternatives, with per-rule counts and `not_evaluated` reasons recorded on
+  the analysis run. Deterministic run and finding ids make replays idempotent
+  and preserve analyst state; notes, tags, and dispositions are append-only
+  revisions where a stale edit is a `conflict` instead of an overwrite, and a
+  dismissal survives re-analysis. Named saved views store typed, validated
+  filters (no SQL) that run through the shared query path. `ghosttrace analyze`
+  prints the report. No rule output expresses a probability of maliciousness
+  (`docs/architecture.md`, `docs/storage.md`, `docs/formats.md`, `docs/cli.md`).

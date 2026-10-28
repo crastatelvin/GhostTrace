@@ -47,12 +47,36 @@ impl Harness {
     /// Write `files` into a fresh source folder, acquire it, and return the
     /// acquisition ID. File contents are exactly the bytes given.
     pub fn capture(&mut self, files: &[(&str, &[u8])]) -> String {
+        self.capture_with_mtime(files, None)
+    }
+
+    /// Like `capture`, but every written file gets the same source mtime.
+    /// Used to exercise metadata-preserving rewrites.
+    pub fn capture_at(&mut self, files: &[(&str, &[u8])], mtime_seconds: i64) -> String {
+        self.capture_with_mtime(files, Some(mtime_seconds))
+    }
+
+    fn capture_with_mtime(
+        &mut self,
+        files: &[(&str, &[u8])],
+        mtime_seconds: Option<i64>,
+    ) -> String {
         self.captures += 1;
         let evidence = self.dir.path().join(format!("evidence-{}", self.captures));
         for (path, bytes) in files {
             let full = evidence.join(path);
             std::fs::create_dir_all(full.parent().expect("parent")).expect("dirs");
             std::fs::write(&full, bytes).expect("write evidence");
+            if let Some(seconds) = mtime_seconds {
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&full)
+                    .expect("open for mtime");
+                let times = std::fs::FileTimes::new().set_modified(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds as u64),
+                );
+                file.set_times(times).expect("set mtime");
+            }
         }
         std::fs::create_dir_all(&evidence).expect("evidence dir");
         let spec = CaptureSpec {

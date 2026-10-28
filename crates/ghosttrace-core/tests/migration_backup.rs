@@ -40,11 +40,11 @@ fn upgrade_backup_retains_committed_wal_data() {
     drop(session);
 
     let connection = Connection::open(&database).unwrap();
-    // Version 5 is the next free version: the embedded set now ends at
-    // 0004_analysis (P5.1).
+    // Version 6 is the next free version: the embedded set now ends at
+    // 0005_findings (P5.2).
     let add_note = custom(
-        5,
-        "0005_test_note",
+        6,
+        "0006_test_note",
         "CREATE TABLE note (id INTEGER PRIMARY KEY, body TEXT);",
     );
     let outcome = migrate::apply_with(
@@ -54,6 +54,7 @@ fn upgrade_backup_retains_committed_wal_data() {
             MIGRATIONS[1],
             MIGRATIONS[2],
             MIGRATIONS[3],
+            MIGRATIONS[4],
             add_note,
         ],
         Some(&backup_dir),
@@ -65,10 +66,10 @@ fn upgrade_backup_retains_committed_wal_data() {
         .expect("an existing case must be backed up first");
     assert!(artifact.integrity_ok, "the backup must verify");
     assert_eq!(
-        artifact.schema_version, 4,
+        artifact.schema_version, 5,
         "backup captured the pre-upgrade schema"
     );
-    assert_eq!(artifact.applied_migrations.len(), 4);
+    assert_eq!(artifact.applied_migrations.len(), 5);
     assert_eq!(artifact.applied_migrations[0].1, "0001_case");
     assert_eq!(artifact.applied_migrations[1].1, "0002_file_times");
 
@@ -85,7 +86,7 @@ fn upgrade_backup_retains_committed_wal_data() {
     // ...while the backup holds the committed WAL data as it was before.
     let verification = backup::validate_backup(&artifact.path).unwrap();
     assert!(verification.integrity_ok);
-    assert_eq!(verification.applied_migrations.len(), 4);
+    assert_eq!(verification.applied_migrations.len(), 5);
     assert_eq!(verification.applied_migrations[0].1, "0001_case");
     assert_eq!(verification.applied_migrations[1].1, "0002_file_times");
     let backup_connection =
@@ -110,11 +111,11 @@ fn backup_failure_prevents_migration() {
     drop(session);
 
     let connection = Connection::open(&database).unwrap();
-    // Version 5 is the next free version: the embedded set now ends at
-    // 0004_analysis (P5.1).
+    // Version 6 is the next free version: the embedded set now ends at
+    // 0005_findings (P5.2).
     let add_note = custom(
-        5,
-        "0005_test_note",
+        6,
+        "0006_test_note",
         "CREATE TABLE note (id INTEGER PRIMARY KEY, body TEXT);",
     );
     let outcome = migrate::apply_with(
@@ -124,6 +125,7 @@ fn backup_failure_prevents_migration() {
             MIGRATIONS[1],
             MIGRATIONS[2],
             MIGRATIONS[3],
+            MIGRATIONS[4],
             add_note,
         ],
         Some(&blocker),
@@ -148,8 +150,8 @@ fn backup_failure_prevents_migration() {
     let version: u32 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    // The seeded case already carries the full embedded schema (0004_analysis).
-    assert_eq!(version, 4);
+    // The seeded case already carries the full embedded schema (0005_findings).
+    assert_eq!(version, 5);
 }
 
 #[test]
@@ -162,8 +164,8 @@ fn failed_migration_leaves_the_original_recoverable() {
 
     let connection = Connection::open(&database).unwrap();
     let broken = custom(
-        5,
-        "0005_broken",
+        6,
+        "0006_broken",
         "CREATE TABLE note (id INTEGER PRIMARY KEY",
     ); // unterminated
     let outcome = migrate::apply_with(
@@ -173,6 +175,7 @@ fn failed_migration_leaves_the_original_recoverable() {
             MIGRATIONS[1],
             MIGRATIONS[2],
             MIGRATIONS[3],
+            MIGRATIONS[4],
             broken,
         ],
         Some(&backup_dir),
@@ -189,7 +192,7 @@ fn failed_migration_leaves_the_original_recoverable() {
     let version: u32 = connection
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 4, "the failed migration did not bump the schema");
+    assert_eq!(version, 5, "the failed migration did not bump the schema");
     // The pre-migration backup validates and can be restored.
     let backups: Vec<_> = std::fs::read_dir(&backup_dir)
         .unwrap()
@@ -200,7 +203,7 @@ fn failed_migration_leaves_the_original_recoverable() {
     assert_eq!(backups.len(), 1, "a validated backup exists for recovery");
     let verification = backup::validate_backup(&backups[0]).unwrap();
     assert!(verification.integrity_ok);
-    assert_eq!(verification.applied_migrations.len(), 4);
+    assert_eq!(verification.applied_migrations.len(), 5);
     assert_eq!(verification.applied_migrations[0].1, "0001_case");
     assert_eq!(verification.applied_migrations[1].1, "0002_file_times");
 }

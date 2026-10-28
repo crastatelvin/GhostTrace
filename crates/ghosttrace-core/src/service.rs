@@ -10,10 +10,14 @@ use std::path::PathBuf;
 
 use rusqlite::Connection;
 
+use crate::analysis::annotations::{AnnotationRevision, AppendAnnotation};
 use crate::analysis::correlate::{
     CorrelateConfig, CorrelateReport, RelationshipPage, RelationshipQuery,
 };
 use crate::analysis::entities::EntityBuildReport;
+use crate::analysis::rules::{AnalysisReport, AnalysisRequest};
+use crate::analysis::views::{SavedFilter, SavedView};
+use crate::domain::finding::Finding;
 use crate::domain::query::{EventPage, EventQuery};
 use crate::error::{CoreError, CoreResult};
 use crate::jobs::RecoverableJob;
@@ -223,6 +227,63 @@ impl CaseSession {
     pub fn query_relationships(&self, query: &RelationshipQuery) -> CoreResult<RelationshipPage> {
         let reader = self.reader()?;
         crate::analysis::correlate::query_relationships(&reader, query)
+    }
+
+    /// Evaluate the compiled rules against one parse run (plan P5.2).
+    pub fn analyze(&self, request: &AnalysisRequest) -> CoreResult<AnalysisReport> {
+        let reader = self.reader()?;
+        crate::analysis::rules::run_analysis(&self.writer, &reader, request)
+    }
+
+    /// Findings recorded by one analysis run, including preserved dispositions.
+    pub fn findings(&self, analysis_run_id: &str) -> CoreResult<Vec<Finding>> {
+        let reader = self.reader()?;
+        crate::analysis::rules::findings_for_run(&reader, analysis_run_id)
+    }
+
+    /// Append a note, tag set, or disposition. A stale `expected_previous`
+    /// returns `conflict` instead of overwriting someone else's edit.
+    pub fn append_annotation(&self, request: &AppendAnnotation) -> CoreResult<AnnotationRevision> {
+        let reader = self.reader()?;
+        crate::analysis::annotations::append(&self.writer, &reader, request)
+    }
+
+    /// Newest-first annotation history for one target.
+    pub fn annotations(&self, target_id: &str, limit: u32) -> CoreResult<Vec<AnnotationRevision>> {
+        let reader = self.reader()?;
+        crate::analysis::annotations::history(&reader, target_id, limit)
+    }
+
+    /// The newest recorded disposition for a target, if any.
+    pub fn current_disposition(
+        &self,
+        target_id: &str,
+    ) -> CoreResult<Option<crate::domain::finding::Disposition>> {
+        let reader = self.reader()?;
+        crate::analysis::annotations::current_disposition(&reader, target_id)
+    }
+
+    /// Save or replace a named, validated filter.
+    pub fn save_view(&self, name: &str, filter: &SavedFilter) -> CoreResult<SavedView> {
+        let reader = self.reader()?;
+        crate::analysis::views::save(&self.writer, &reader, name, filter)
+    }
+
+    pub fn saved_views(&self) -> CoreResult<Vec<SavedView>> {
+        let reader = self.reader()?;
+        crate::analysis::views::list(&reader)
+    }
+
+    pub fn saved_view(&self, name: &str) -> CoreResult<SavedView> {
+        let reader = self.reader()?;
+        crate::analysis::views::load(&reader, name)
+    }
+
+    /// Run a stored view against one revision through the shared query path.
+    pub fn run_saved_view(&self, revision: &str, name: &str) -> CoreResult<EventPage> {
+        let reader = self.reader()?;
+        let view = crate::analysis::views::load(&reader, name)?;
+        crate::analysis::views::run(&reader, &self.display_timezone, revision, &view)
     }
 }
 

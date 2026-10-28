@@ -7,6 +7,7 @@
 pub mod case;
 pub mod event;
 pub mod evidence;
+pub mod finding;
 pub mod path;
 pub mod query;
 pub mod time;

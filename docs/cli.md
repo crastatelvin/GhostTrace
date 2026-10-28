@@ -337,3 +337,30 @@ boot-scoped and never choose a timeline position; only
 `__REALTIME_TIMESTAMP` does. Browser times keep their Chromium-1601 or Firefox
 PRTime epoch and unit next to the normalized instant; download fields that the
 captured schema does not contain are reported, never invented.
+
+## `analyze`
+
+Evaluates the five compiled rules over one revision and prints the run.
+
+```bash
+ghosttrace analyze --case <DIR>.ghosttrace-case \
+  [--revision <RUN_ID>] [--rules rules.toml]
+```
+
+`--revision` defaults to the newest revision of the latest acquisition. Without
+`--rules`, documented defaults are used and the outside-hours rule stays
+disabled. Unknown TOML keys and out-of-range values exit `2` with
+`invalid_request`; a case with no parse run also exits `2`.
+
+Output: `{"run_id","revision","rules_id","rules_version","config_digest",
+"state","outcomes":[...],"findings":[...]}`. Each outcome carries
+`rule_id`, `rule_version`, `status` (`evaluated` or `not_evaluated`), `reason`,
+`findings`, `events_considered`, `excluded`, and `truncated`. Each finding
+carries the rule id/version, sorted supporting `event_ids`, the exact
+`predicates`, `severity`, `rationale`, `alternatives`, and the current
+`disposition`.
+
+Exit codes: `0` the pass completed, `3` a bound truncated a rule, `2` invalid
+parameters or no revision, `1` storage failure. The same revision and parameter
+set produce the same `run_id` and finding ids, and a stored analyst disposition
+is reported again after a re-run. There is no maliciousness score in any field.

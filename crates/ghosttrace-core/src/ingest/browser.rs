@@ -754,6 +754,7 @@ fn chromium_visit(row: &Row<'_>) -> CoreResult<ParsedRecord> {
     );
     let summary = summary_for(title.as_deref(), url.as_deref(), "visit");
     Ok(ParsedRecord {
+        mapped_json: None,
         locator,
         locator_kind: "logical_row",
         raw_json: Some(Value::Object(fields).to_string()),
@@ -930,6 +931,7 @@ fn chromium_download(
     let current = text_value(row, 1)?;
     let summary = summary_for(target.as_deref(), current.as_deref(), "download");
     Ok(ParsedRecord {
+        mapped_json: None,
         locator,
         locator_kind: "logical_row",
         raw_json: Some(Value::Object(fields).to_string()),
@@ -1045,6 +1047,7 @@ fn firefox_visit(row: &Row<'_>) -> CoreResult<ParsedRecord> {
         &mut diagnostics,
     );
     Ok(ParsedRecord {
+        mapped_json: None,
         locator,
         locator_kind: "logical_row",
         raw_json: Some(Value::Object(fields).to_string()),

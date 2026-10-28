@@ -355,6 +355,7 @@ impl CaseWriter {
                     "locator_kind",
                     "locator_identity",
                     "raw_fields_json",
+                    "mapped_fields_json",
                 ],
                 vec![
                     Param::Text(observation.id.clone()),
@@ -364,6 +365,7 @@ impl CaseWriter {
                     Param::Text(observation.locator_kind.to_string()),
                     Param::Text(observation.locator_identity.clone()),
                     Param::Text(observation.raw_fields_json.clone()),
+                    Param::OptText(observation.mapped_fields_json.clone()),
                 ],
             ));
         }
@@ -437,6 +439,8 @@ pub struct ObservationRecord {
     pub locator_kind: &'static str,
     pub locator_identity: String,
     pub raw_fields_json: String,
+    /// Adapter-mapped structured fields, kept apart from the raw record.
+    pub mapped_fields_json: Option<String>,
 }
 
 fn parse_run_op(run: &ParseRunRecord) -> WriteOp {
