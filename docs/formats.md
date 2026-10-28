@@ -26,6 +26,23 @@ unique per `(acquisition, evidence, run, locator)` and events are unique per
 `(revision, event id)`. Changing any mapped field or bound creates a different
 run and therefore a different revision to review.
 
+### Revisions keep both interpretations (P4.4)
+
+The run id is also the **revision label** of the events that run produced.
+Importing the same RFC 3164 log twice with different `--year`/`--timezone`
+values therefore records two revisions, each with its own events, instead of
+replacing the earlier one:
+
+```bash
+ghosttrace import --case C --path logs/auth.log --format syslog-3164 --year 2026 --timezone UTC
+ghosttrace import --case C --path logs/auth.log --format syslog-3164 --year 2026 --timezone Asia/Kolkata
+```
+
+Both runs stay listed with the assumptions each recorded, and both sets of
+events stay readable. Reports pin one revision, so an already-published
+report stays reproducible: `--revision RUN_ID` reproduces it exactly, and
+pin-copying the same selection twice yields identical bytes.
+
 ## Bounds
 
 | Bound | Default | Behavior when reached |

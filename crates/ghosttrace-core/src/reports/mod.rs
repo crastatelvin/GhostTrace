@@ -26,6 +26,9 @@ pub struct ReportV1 {
     pub tool_version: String,
     pub case: CaseView,
     pub acquisition: AcquisitionView,
+    /// Parse run whose events the timeline shows (plan P4.4: each import is
+    /// its own revision, so a report names the one it pins).
+    pub revision: String,
     pub coverage: CoverageView,
     pub objects: Vec<ObjectView>,
     pub timeline: Vec<TimelineView>,
@@ -131,6 +134,11 @@ pub struct ReportContext {
 pub struct ReportSelection {
     /// Latest acquisition when `None`.
     pub acquisition_id: Option<String>,
+    /// Revision whose events the timeline shows. The newest parse run of the
+    /// acquisition when `None`, so a report is reproducible: re-importing the
+    /// same object with different assumptions records another revision and the
+    /// report does not silently mix the two.
+    pub revision: Option<String>,
     pub event_limit: u32,
 }
 
@@ -138,6 +146,7 @@ impl Default for ReportSelection {
     fn default() -> Self {
         Self {
             acquisition_id: None,
+            revision: None,
             event_limit: 500,
         }
     }
@@ -284,6 +293,38 @@ pub fn build_report(
     }
 
     let event_limit = selection.event_limit.clamp(1, 5_000);
+    // Resolve the revision whose events this report shows. A named revision
+    // must exist in this acquisition or the request is rejected — a report
+    // never silently falls back to a different revision's facts.
+    let revision = match selection.revision.as_deref() {
+        Some(revision) => {
+            let belongs: bool = connection
+                .query_row(
+                    "SELECT count(*) > 0 FROM parse_runs WHERE id = ?1 AND acquisition_id = ?2",
+                    rusqlite::params![revision, &acquisition.0],
+                    |row| row.get(0),
+                )
+                .map_err(|error| CoreError::Storage(format!("report revision: {error}")))?;
+            if !belongs {
+                return Err(CoreError::InvalidInput(format!(
+                    "revision {revision} is not a parse run of acquisition {}",
+                    acquisition.0
+                )));
+            }
+            revision.to_string()
+        }
+        // The newest parse run of the acquisition, so the report is
+        // reproducible: a re-import adds a revision and does not change this
+        // one.
+        None => connection
+            .query_row(
+                "SELECT id FROM parse_runs WHERE acquisition_id = ?1
+                 ORDER BY rowid DESC LIMIT 1",
+                [&acquisition.0],
+                |row| row.get(0),
+            )
+            .map_err(|error| CoreError::Storage(format!("report revision: {error}")))?,
+    };
     let mut timeline = Vec::new();
     {
         let mut statement = connection
@@ -292,14 +333,14 @@ pub fn build_report(
                         e.chosen_seconds, e.chosen_nanos, e.time_status
                  FROM events e
                  JOIN parse_runs p ON p.id = e.parse_run_id
-                 WHERE p.acquisition_id = ?1
+                 WHERE e.revision = ?3
                  ORDER BY (e.chosen_seconds IS NULL), e.chosen_seconds, e.chosen_nanos, e.id
                  LIMIT ?2",
             )
             .map_err(|error| CoreError::Storage(format!("report timeline: {error}")))?;
         let rows = statement
             .query_map(
-                rusqlite::params![&acquisition.0, event_limit as i64],
+                rusqlite::params![&acquisition.0, event_limit as i64, &revision],
                 |row| {
                     Ok(TimelineView {
                         event_id: row.get(0)?,
@@ -356,6 +397,7 @@ pub fn build_report(
             started_seconds: acquisition.6,
             ended_seconds: acquisition.7,
         },
+        revision: revision.clone(),
         coverage,
         objects,
         timeline,
@@ -366,7 +408,9 @@ pub fn build_report(
             claimed_source: acquisition.2,
             link_policy: acquisition.5,
             roots,
-            timeline_selection: format!("events limited to {event_limit} in acquisition order"),
+            timeline_selection: format!(
+                "events of revision {revision} limited to {event_limit} in acquisition order"
+            ),
             signed: false,
         },
         limitations,

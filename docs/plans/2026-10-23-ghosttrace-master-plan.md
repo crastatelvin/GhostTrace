@@ -868,10 +868,10 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P4 events/raw locators. **Produces:** Validated structured/FTS search, explicit time-assumption revisions, rebuildable search index.
 
-- [ ] Test phrase/token search, invalid syntax, parameterized filters, source/time constraints, index rebuild, and bounded results on scale corpus.
-- [ ] Test changing a source zone/year creates a new parse/normalization revision while the old report remains reproducible.
-- [ ] Implement safe grammar and keyset pagination, no arbitrary SQL; add explain-plan checks for critical indexes.
-- [ ] Commit: `feat: add indexed search and reviewed timestamp normalization`.
+- [x] Test phrase/token search, invalid syntax, parameterized filters, source/time constraints, index rebuild, and bounded results on scale corpus.
+- [x] Test changing a source zone/year creates a new parse/normalization revision while the old report remains reproducible.
+- [x] Implement safe grammar and keyset pagination, no arbitrary SQL; add explain-plan checks for critical indexes.
+- [x] Commit: `feat: add indexed search and reviewed timestamp normalization`.
 
 **P4 gate:** Mixed-source sample counts and provenance match ground truth; raw values survive re-parsing; schema drift and ambiguous time remain visible. Promote `0.2.0-alpha.1` only after docs describe actual supported formats.
 
@@ -1113,7 +1113,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P4 | P4.1 | JSONL/syslog adapter contract | [x] |
 | P4 | P4.2 | Binary-safe journal export | [x] |
 | P4 | P4.3 | Browser history/WAL/schema support | [x] |
-| P4 | P4.4 | FTS and time revisions | [ ] |
+| P4 | P4.4 | FTS and time revisions | [x] |
 | P5 | P5.1 | Scoped entities/relationships | [ ] |
 | P5 | P5.2 | Explainable rules/notes/views | [ ] |
 | P6 | P6.1 | Desktop case/import | [ ] |

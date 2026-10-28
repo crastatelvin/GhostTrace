@@ -72,10 +72,17 @@ only letters, digits, `-`, `_`, and `.`; anything else is a usage error.
 - Coverage: counts for every status plus a bounded list of gap rows
   (`gaps_complete: false` when truncated).
 - Objects: every captured path with its full SHA-256 and byte length.
-- Timeline: application-clock events for that acquisition, in chosen-time
-  order, limited by `--limit` (recorded in `provenance.timeline_selection`).
+- `revision`: the parse run whose events the timeline shows.
+- Timeline: events of that revision, in chosen-time order, limited by
+  `--limit` (recorded in `provenance.timeline_selection`).
 - Provenance: generator, tool version, method, claimed source, link policy,
   roots, and `signed: false`.
+
+The timeline is pinned to exactly one revision. A re-import records a new
+revision rather than replacing the earlier one, so pinning is what makes a
+report reproducible: passing the same `--revision` again produces the same
+timeline, and rebuilding with no `--revision` selects the newest parse run
+deterministically. A report never mixes two revisions' events.
 - Limitations: fixed, human-readable statements, plus a partial-results
   statement whenever coverage gaps exist.
 

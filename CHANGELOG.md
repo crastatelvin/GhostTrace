@@ -108,3 +108,14 @@ file records implemented capability only.
   labels, and preserved download URL chains. Views, virtual tables, SQL limits,
   a query deadline, corrupt pages, and missing contract columns are rejected
   instead of parsed best-effort (`docs/formats.md`).
+- P4.4 (2026-10-27): indexed search and reviewed timestamp normalization —
+  `ghosttrace search` over an FTS5 external-content index of summary/kind/host
+  text with a validated grammar bound as a parameter (no operator text in SQL),
+  the same structured filters and keyset paging as `timeline`, a rebuildable
+  index that cannot alter a recorded event, and a migration that indexes
+  existing cases. Each import now records its own revision, so re-importing
+  with different `--year`/`--timezone` assumptions keeps both interpretations
+  with their recorded assumptions (`parse_runs.assumptions_json`), and reports
+  pin one revision (`--revision`) so a published report stays reproducible.
+  `timeline`/`report` gained revision selection; defaults read the newest
+  revision of the latest acquisition (`docs/cli.md`, `docs/storage.md`).

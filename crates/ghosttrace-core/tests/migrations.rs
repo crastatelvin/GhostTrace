@@ -24,11 +24,13 @@ fn fresh_case_applies_schema_and_records_checksum() {
     let dir = tempfile::tempdir().unwrap();
     let connection = fresh_database(dir.path());
     let created = migrate::create_schema(&connection).unwrap();
-    assert_eq!(created.applied.len(), 2);
+    assert_eq!(created.applied.len(), 3);
     assert_eq!(created.applied[0].name, "0001_case");
     assert_eq!(created.applied[0].checksum, MIGRATIONS[0].checksum());
     assert_eq!(created.applied[1].name, "0002_file_times");
     assert_eq!(created.applied[1].checksum, MIGRATIONS[1].checksum());
+    assert_eq!(created.applied[2].name, "0003_search");
+    assert_eq!(created.applied[2].checksum, MIGRATIONS[2].checksum());
     assert!(created.backup.is_none(), "a new empty case needs no backup");
     let reopened = migrate::migrate(&connection, None).unwrap();
     assert!(reopened.applied.is_empty(), "nothing pending on reopen");
@@ -38,10 +40,17 @@ fn fresh_case_applies_schema_and_records_checksum() {
 #[test]
 fn embedded_migrations_are_ordered_and_checksum_stable() {
     let versions: Vec<u32> = MIGRATIONS.iter().map(|m| m.version).collect();
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
     assert_eq!(MIGRATIONS[0].checksum(), MIGRATIONS[0].checksum());
     assert!(MIGRATIONS[0].sql.contains("CREATE TABLE"));
     assert!(MIGRATIONS[1].sql.contains("ALTER TABLE file_observations"));
+    // The search index is derived, never a copy of event text.
+    assert!(MIGRATIONS[2].sql.contains("content = 'events'"));
+    assert!(
+        MIGRATIONS[2]
+            .sql
+            .contains("events_fts (events_fts) VALUES ('rebuild')")
+    );
 }
 
 #[test]

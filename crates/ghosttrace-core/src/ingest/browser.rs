@@ -44,7 +44,7 @@ use crate::storage::writer::{CaseWriter, ParseRunRecord};
 use super::{
     ADAPTER_VERSION, Committer, Counts, Diagnostics, EventDraft, EvidenceRef, ImportDiagnostic,
     ImportOutcome, ImportRequest, LogFormat, ParsedRecord, RunSummary, finalize_run,
-    find_captured_encoded, hex_bytes, sha256_bytes, truncate_text,
+    find_captured_encoded, hex_bytes, recorded_assumptions, sha256_bytes, truncate_text,
 };
 
 const KIND_VISIT: &str = "browser.visit";
@@ -216,6 +216,7 @@ pub(crate) fn run(
         state: "running".to_string(),
         counts_json: counts.to_json(),
         diagnostics_json: "[]".to_string(),
+        assumptions_json: recorded_assumptions(LogFormat::Browser, request)?,
     };
     writer.queue_parse_run(&run)?;
 

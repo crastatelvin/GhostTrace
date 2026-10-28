@@ -121,19 +121,19 @@ fn seed_extra_events(case: &Path, acquisition_id: &str) {
     writer
         .queue_event(
             &timed("evt-old", "run-demo", "log.entry", Some("host-1"), 1_000),
-            "r1",
+            "run-demo",
         )
         .unwrap();
     writer
         .queue_event(
             &timed("evt-new", "run-demo", "log.entry", Some("host-1"), 2_000),
-            "r1",
+            "run-demo",
         )
         .unwrap();
     writer
         .queue_event(
             &timed("evt-other", "run-other", "trace.line", None, 2_000),
-            "r1",
+            "run-other",
         )
         .unwrap();
     let unresolved = Event {
@@ -145,7 +145,34 @@ fn seed_extra_events(case: &Path, acquisition_id: &str) {
         host_claim: None,
         revision: "run-other".to_string(),
     };
-    writer.queue_event(&unresolved, "r1").unwrap();
+    writer.queue_event(&unresolved, "run-other").unwrap();
+}
+
+/// The acquisition of a freshly scanned case.
+fn acquisitions_of(case: &Path) -> String {
+    let output = run(&["status", "--case", case.to_str().unwrap()]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    parsed["acquisitions"][0]["id"]
+        .as_str()
+        .expect("acquisition id")
+        .to_string()
+}
+
+/// One event of a third revision, used for keyset paging.
+fn timed_event(index: i64) -> Event {
+    Event {
+        id: format!("evt-page-{index}"),
+        kind: "page.entry".to_string(),
+        summary: format!("page entry {index}"),
+        observations: Vec::new(),
+        times: vec![NamedEventTimeRef {
+            name: "chosen".to_string(),
+            semantic: TimeSemantic::OccurrenceTime,
+            value: EventTime::from_unix_seconds(index * 100, TimeSemantic::OccurrenceTime),
+        }],
+        host_claim: None,
+        revision: "run-page".to_string(),
+    }
 }
 
 #[test]
@@ -154,6 +181,7 @@ fn last_window_anchors_to_the_case_latest_event() {
     let (case, acquisitions) = create_and_scan(dir.path());
     seed_extra_events(&case, &acquisitions[0]);
 
+    // No --revision: the newest revision of the latest acquisition is read.
     let full = run(&[
         "timeline",
         "--case",
@@ -162,6 +190,10 @@ fn last_window_anchors_to_the_case_latest_event() {
         "1000",
     ]);
     let full: serde_json::Value = serde_json::from_str(&stdout(&full)).unwrap();
+    assert_eq!(
+        full["revision"], "run-other",
+        "the default reads the newest revision"
+    );
     let latest = full["rows"]
         .as_array()
         .unwrap()
@@ -204,6 +236,8 @@ fn explicit_until_bounds_the_window() {
         "timeline",
         "--case",
         case.to_str().unwrap(),
+        "--revision",
+        "run-demo",
         "--until",
         "1970-01-01T00:30:00Z",
     ]);
@@ -229,8 +263,21 @@ fn unresolved_view_is_explicit_and_separate() {
     let (case, acquisitions) = create_and_scan(dir.path());
     seed_extra_events(&case, &acquisitions[0]);
 
-    let resolved = run(&["timeline", "--case", case.to_str().unwrap()]);
-    let unresolved = run(&["timeline", "--case", case.to_str().unwrap(), "--unresolved"]);
+    let resolved = run(&[
+        "timeline",
+        "--case",
+        case.to_str().unwrap(),
+        "--revision",
+        "run-other",
+    ]);
+    let unresolved = run(&[
+        "timeline",
+        "--case",
+        case.to_str().unwrap(),
+        "--revision",
+        "run-other",
+        "--unresolved",
+    ]);
     let resolved: serde_json::Value = serde_json::from_str(&stdout(&resolved)).unwrap();
     let unresolved: serde_json::Value = serde_json::from_str(&stdout(&unresolved)).unwrap();
 
@@ -258,6 +305,8 @@ fn kind_host_and_source_filters_are_exact() {
         "timeline",
         "--case",
         case.to_str().unwrap(),
+        "--revision",
+        "run-other",
         "--kind",
         "trace.line",
     ]);
@@ -269,6 +318,8 @@ fn kind_host_and_source_filters_are_exact() {
         "timeline",
         "--case",
         case.to_str().unwrap(),
+        "--revision",
+        "run-demo",
         "--source",
         "demo.parser.v1",
     ]);
@@ -286,6 +337,8 @@ fn kind_host_and_source_filters_are_exact() {
         "timeline",
         "--case",
         case.to_str().unwrap(),
+        "--revision",
+        "run-demo",
         "--host",
         "host-1",
     ]);
@@ -299,10 +352,48 @@ fn repeated_pages_are_stable_and_complete() {
     let (case, acquisitions) = create_and_scan(dir.path());
     seed_extra_events(&case, &acquisitions[0]);
 
+    // Seed enough events in this revision for several pages.
+    {
+        let session = CaseSession::open(&case).unwrap().0;
+        let writer = session.writer();
+        writer
+            .execute(WriteBatch::new().push(WriteOp::fact(
+                "parse_runs",
+                vec![
+                    "id",
+                    "acquisition_id",
+                    "parser_id",
+                    "parser_version",
+                    "config_digest",
+                    "state",
+                    "counts_json",
+                    "diagnostics_json",
+                    "assumptions_json",
+                ],
+                vec![
+                    Param::Text("run-page".into()),
+                    Param::Text(acquisitions_of(&case)),
+                    Param::Text("demo.parser.v1".into()),
+                    Param::Text("1.0".into()),
+                    Param::Text(String::new()),
+                    Param::Text("completed".into()),
+                    Param::Text("{}".into()),
+                    Param::Text("[]".into()),
+                    Param::Text("[]".into()),
+                ],
+            )))
+            .unwrap();
+        for index in 1..=6 {
+            let event = timed_event(index);
+            writer.queue_event(&event, "run-page").unwrap();
+        }
+    }
     let full = run(&[
         "timeline",
         "--case",
         case.to_str().unwrap(),
+        "--revision",
+        "run-page",
         "--limit",
         "100",
     ]);
@@ -322,6 +413,8 @@ fn repeated_pages_are_stable_and_complete() {
             "timeline".to_string(),
             "--case".to_string(),
             case.to_str().unwrap().to_string(),
+            "--revision".to_string(),
+            "run-page".to_string(),
             "--limit".to_string(),
             "2".to_string(),
         ];
@@ -344,9 +437,25 @@ fn repeated_pages_are_stable_and_complete() {
     assert_eq!(collected, expected, "keyset paging never skips or repeats");
 
     // Repeating the first page yields the identical page.
-    let first = run(&["timeline", "--case", case.to_str().unwrap(), "--limit", "2"]);
+    let first = run(&[
+        "timeline",
+        "--case",
+        case.to_str().unwrap(),
+        "--revision",
+        "run-page",
+        "--limit",
+        "2",
+    ]);
     let first: serde_json::Value = serde_json::from_str(&stdout(&first)).unwrap();
-    let again = run(&["timeline", "--case", case.to_str().unwrap(), "--limit", "2"]);
+    let again = run(&[
+        "timeline",
+        "--case",
+        case.to_str().unwrap(),
+        "--revision",
+        "run-page",
+        "--limit",
+        "2",
+    ]);
     let again: serde_json::Value = serde_json::from_str(&stdout(&again)).unwrap();
     assert_eq!(first["rows"], again["rows"]);
     assert_eq!(first["next_cursor"], again["next_cursor"]);

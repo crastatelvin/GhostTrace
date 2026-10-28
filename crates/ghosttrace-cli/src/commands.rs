@@ -66,6 +66,18 @@ pub enum Cli {
  newest instant in the case unless --until supplies an explicit upper bound."
     )]
     Timeline(TimelineArgs),
+    /// Full-text search over indexed event summary, kind, and host text.
+    #[command(
+        long_about = "Full-text search over indexed event summary, kind, and host text.\
+\n\nThe search grammar is deliberately tiny: bare words, \"quoted phrases\", and a\
+ leading `-` to exclude a term. Anything else is rejected with an explanation\
+ instead of silently reinterpreted. The expression is passed to FTS5 as a bound\
+ parameter; no operator text ever enters SQL. Structured filters and keyset\
+ paging are identical to `timeline`. Raw field values that are not summary,\
+ kind, or host text are not indexed and stay reachable through `timeline` and\
+ the event detail."
+    )]
+    Search(SearchArgs),
     /// Compare two acquisitions of the same roots.
     #[command(long_about = "Compare two acquisitions of the same roots.\
 \n\nAbsence in the later capture means \"not present in the captured scope\",\
@@ -181,9 +193,48 @@ pub struct TimelineArgs {
     /// The explicit unresolved-time view.
     #[arg(long)]
     pub unresolved: bool,
-    /// Revision to read (capture metadata events use `r1`).
-    #[arg(long, default_value = "r1")]
-    pub revision: String,
+    /// Revision (parse run) to read; defaults to the newest revision of the
+    /// selected acquisition. Capture metadata events alone use the literal
+    /// `r1`, and it is always accepted.
+    #[arg(long)]
+    pub revision: Option<String>,
+    #[arg(long, default_value_t = EventQuery::DEFAULT_LIMIT)]
+    pub limit: u32,
+    /// Opaque cursor from a previous page (`seconds:nanos:event_id`).
+    #[arg(long)]
+    pub cursor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct SearchArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Search text: words, "quoted phrases", and `-term` to exclude.
+    #[arg(long, allow_hyphen_values = true)]
+    pub text: String,
+    /// Exact event kind filter (e.g. `browser.visit`).
+    #[arg(long)]
+    pub kind: Option<String>,
+    /// Exact host-claim filter.
+    #[arg(long)]
+    pub host: Option<String>,
+    /// Exact parser/adapter identity filter (`parse_runs.parser_id`).
+    #[arg(long)]
+    pub source: Option<String>,
+    /// Inclusive lower bound on chosen time (Unix seconds).
+    #[arg(long, allow_hyphen_values = true)]
+    pub after: Option<i64>,
+    /// Exclusive upper bound on chosen time (Unix seconds).
+    #[arg(long)]
+    pub before: Option<i64>,
+    /// The explicit unresolved-time view.
+    #[arg(long)]
+    pub unresolved: bool,
+    /// Revision (parse run) to read; defaults to the newest of the latest
+    /// acquisition.
+    #[arg(long)]
+    pub revision: Option<String>,
     #[arg(long, default_value_t = EventQuery::DEFAULT_LIMIT)]
     pub limit: u32,
     /// Opaque cursor from a previous page (`seconds:nanos:event_id`).
@@ -233,6 +284,11 @@ pub struct ReportArgs {
     /// Acquisition to report (default: the latest).
     #[arg(long)]
     pub acquisition: Option<String>,
+    /// Parse run (revision) whose events the timeline shows. Defaults to the
+    /// newest parse run of the acquisition; an earlier revision stays
+    /// selectable so an old report can be reproduced exactly.
+    #[arg(long)]
+    pub revision: Option<String>,
     /// Maximum timeline events included in the report.
     #[arg(long, default_value_t = 500)]
     pub limit: u32,
@@ -418,6 +474,16 @@ struct TimelineOutput {
 }
 
 #[derive(Serialize)]
+struct SearchOutput {
+    /// The operator's search text, echoed for the record.
+    text: String,
+    revision: String,
+    resolved_view: bool,
+    rows: Vec<EventRow>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
 struct VerifyOutput {
     verified: bool,
     manifest_id: String,
@@ -465,6 +531,7 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Scan(args) => scan(args),
         Cli::Status(args) => status(args),
         Cli::Timeline(args) => timeline(args),
+        Cli::Search(args) => search(args),
         Cli::Diff(args) => diff(args),
         Cli::Verify(args) => verify(args),
         Cli::Report(args) => report(args),
@@ -639,6 +706,7 @@ fn report(args: ReportArgs) -> u8 {
     };
     let selection = ReportSelection {
         acquisition_id: args.acquisition,
+        revision: args.revision,
         event_limit: args.limit,
     };
     let mut report = match reports::build_report(&reader, &context, &selection) {
@@ -937,6 +1005,23 @@ fn timeline(args: TimelineArgs) -> u8 {
         Ok(reader) => reader,
         Err(error) => return fail(&error),
     };
+    // Resolve the revision to read: the operator's choice, or the newest
+    // revision of the latest acquisition. A revision is echoed back so the
+    // caller can tell which normalization produced the page.
+    let revision = match args.revision.as_deref() {
+        Some(revision) => revision.to_string(),
+        None => match reader.latest_revision(None) {
+            Ok(Some(revision)) => revision,
+            Ok(None) => {
+                output::emit_error(
+                    "invalid_usage",
+                    "this case has no parse run yet; import an object or scan the case first",
+                );
+                return EXIT_USAGE;
+            }
+            Err(error) => return fail(&error),
+        },
+    };
     let before_seconds = match args.until.as_deref().map(parse_instant) {
         Some(Ok(seconds)) => Some(seconds),
         Some(Err(message)) => {
@@ -954,8 +1039,10 @@ fn timeline(args: TimelineArgs) -> u8 {
         None => None,
     };
     let anchor_seconds = if window.is_some() || before_seconds.is_some() {
+        // Same revision as the view below it, so a relative window ends at the
+        // newest event that view can actually see.
         match before_seconds.map_or_else(
-            || reader.latest_chosen_seconds(),
+            || reader.latest_chosen_seconds(Some(&revision)),
             |seconds| Ok(Some(seconds)),
         ) {
             Ok(anchor) => anchor,
@@ -977,7 +1064,7 @@ fn timeline(args: TimelineArgs) -> u8 {
         None => None,
     };
     let query = EventQuery {
-        revision: args.revision.clone(),
+        revision: revision.clone(),
         kind: args.kind,
         host: args.host,
         source: args.source,
@@ -992,11 +1079,84 @@ fn timeline(args: TimelineArgs) -> u8 {
         Err(error) => return fail(&error),
     };
     output::emit_json(&TimelineOutput {
-        revision: args.revision,
+        revision,
         resolved_view: !args.unresolved,
         after_seconds,
         before_seconds,
         anchor_seconds,
+        rows: page.rows,
+        next_cursor: page.next_cursor.map(format_cursor),
+    });
+    EXIT_OK
+}
+
+fn search(args: SearchArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    let reader = match session.reader() {
+        Ok(reader) => reader,
+        Err(error) => return fail(&error),
+    };
+
+    // Validate the grammar before the revision or the case is touched, so a
+    // bad expression is a usage error and never a half-formed query.
+    let text = match ghosttrace_core::storage::search::validate_search_text(&args.text) {
+        Ok(text) => text,
+        Err(ghosttrace_core::error::CoreError::InvalidInput(message)) => {
+            output::emit_error("invalid_search_text", &message);
+            return EXIT_USAGE;
+        }
+        Err(error) => return fail(&error),
+    };
+
+    let revision = match args.revision.as_deref() {
+        Some(revision) => revision.to_string(),
+        None => match reader.latest_revision(None) {
+            Ok(Some(revision)) => revision,
+            Ok(None) => {
+                output::emit_error(
+                    "invalid_usage",
+                    "this case has no parse run yet; import an object or scan the case first",
+                );
+                return EXIT_USAGE;
+            }
+            Err(error) => return fail(&error),
+        },
+    };
+    let cursor = match args.cursor.as_deref().map(parse_cursor) {
+        Some(Ok(cursor)) => Some(cursor),
+        Some(Err(message)) => {
+            output::emit_error("invalid_usage", &message);
+            return EXIT_USAGE;
+        }
+        None => None,
+    };
+    let query = EventQuery {
+        revision,
+        kind: args.kind,
+        host: args.host,
+        source: args.source,
+        after_seconds: args.after,
+        before_seconds: args.before,
+        unresolved_only: args.unresolved,
+        limit: args.limit,
+        after: cursor,
+    };
+    let page = match ghosttrace_core::storage::search::search_events(
+        &reader,
+        &session.config().display_timezone,
+        &query,
+        &text,
+    ) {
+        Ok(page) => page,
+        Err(error) => return fail(&error),
+    };
+    output::emit_json(&SearchOutput {
+        text: text.input,
+        revision: query.revision,
+        resolved_view: !args.unresolved,
         rows: page.rows,
         next_cursor: page.next_cursor.map(format_cursor),
     });

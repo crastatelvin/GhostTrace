@@ -55,6 +55,20 @@ pub struct EventPage {
     pub display_timezone: String,
 }
 
+/// One recorded parse run of an acquisition, for the revision review list.
+/// A re-import with different assumptions is a separate revision, and both
+/// stay listed and readable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevisionSummary {
+    pub run_id: String,
+    pub parser_id: String,
+    pub parser_version: String,
+    pub config_digest: String,
+    pub state: String,
+    /// Events recorded under this revision.
+    pub events: u64,
+}
+
 impl EventQuery {
     pub const MAX_LIMIT: u32 = 1_000;
     pub const DEFAULT_LIMIT: u32 = 200;

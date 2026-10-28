@@ -39,6 +39,11 @@ impl Harness {
         self.session.layout().root()
     }
 
+    /// Direct access to the session for tests that query or maintain storage.
+    pub fn session(&self) -> &CaseSession {
+        &self.session
+    }
+
     /// Write `files` into a fresh source folder, acquire it, and return the
     /// acquisition ID. File contents are exactly the bytes given.
     pub fn capture(&mut self, files: &[(&str, &[u8])]) -> String {

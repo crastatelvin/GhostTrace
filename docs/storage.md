@@ -66,6 +66,39 @@ integrity-sensitive writes, and a measured 5 s `busy_timeout`.
   read-only for `integrity_check` plus schema verification. **If the backup
   fails, the migration aborts before any schema change.** A new empty case
   needs no pre-creation backup.
+- `0003_search` (P4.4) is additive: an FTS5 external-content index over event
+  summary/kind/host text, an insert trigger, recorded run assumptions, and a
+  rebuild for cases created before it.
+
+## Search index
+
+- `events_fts` is an **external-content** FTS5 table over `events`: the index
+  stores terms, never a second copy of event text. A rebuild can therefore
+  never lose or change a recorded fact, and `events` remains the only place
+  event text lives.
+- A trigger inserts on `events`. Events are immutable facts (no updates or
+  deletes) and the writer's `ON CONFLICT DO NOTHING` makes replays skip the
+  insert, so the trigger alone keeps the index in step. `ghosttrace`
+  can rebuild the index through the dedicated writer
+  (`CaseWriter::rebuild_search_index`), which is the supported repair path.
+- Tokenizer is `unicode61` (word/phrase search). Raw field values, binary
+  values, and evidence bytes are **not** indexed; they are reached through the
+  timeline and event detail.
+- The index is derived, so `xtask`/operator maintenance never needs to reason
+  about whether an index row is "authoritative": `events` is.
+
+## Revisions (one parse run, one revision)
+
+- Every import records a **parse run**, and that run id is the revision label
+  of the events it produced. Re-importing the same object with different time
+  assumptions (for example a different RFC 3164 year or zone) records a **new
+  run** — a new revision — and leaves the earlier events untouched.
+- A revision is therefore the unit of reproducibility: a report pins one
+  revision, and building the same report again produces the same timeline.
+- `timezone` and `year` never silently replace a previous interpretation: both
+  revisions stay listed (`storage::search::list_revisions`) with the
+  assumptions each one recorded (`parse_runs.assumptions_json`), and the
+  operator chooses which to read.
 
 ## Query contract
 
@@ -82,6 +115,10 @@ arbitrary SQL is never exposed to front ends):
   through the explicit unresolved view (`unresolved_only`), which orders by
   event id. The displayed status is preserved (`resolved`, `ambiguous`,
   `unresolved`, `invalid`) so uncertainty stays visible in every front end.
+- `storage/search.rs` adds full-text search over the same `EventQuery`
+  filters, ordered and paged identically. The operator's search text is
+  validated against a documented grammar and passed to FTS5 as a **bound
+  parameter**: no operator text ever becomes SQL.
 
 ## Jobs and recovery
 

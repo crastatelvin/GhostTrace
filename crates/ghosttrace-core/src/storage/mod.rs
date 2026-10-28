@@ -15,6 +15,7 @@
 pub mod backup;
 pub mod migrate;
 pub mod read;
+pub mod search;
 pub mod writer;
 
 pub use migrate::{MIGRATIONS, SUPPORTED_SCHEMA_VERSION};

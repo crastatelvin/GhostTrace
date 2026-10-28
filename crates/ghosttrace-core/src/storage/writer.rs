@@ -157,6 +157,11 @@ enum WriterCommand {
         batch: WriteBatch,
         reply: std::sync::mpsc::Sender<CoreResult<BatchResult>>,
     },
+    /// Rebuild the FTS5 external-content index from `events`. The index is a
+    /// projection, so rebuilding can never lose a recorded fact.
+    RebuildSearchIndex {
+        reply: std::sync::mpsc::Sender<CoreResult<()>>,
+    },
     Shutdown {
         reply: std::sync::mpsc::Sender<CoreResult<()>>,
     },
@@ -316,6 +321,19 @@ impl CaseWriter {
         self.execute(WriteBatch::new().push(parse_run_op(run)))
     }
 
+    /// Rebuild the search index from the recorded events. The index is derived,
+    /// so this is a safe operation that only an operator or a repair path runs:
+    /// it cannot change any event.
+    pub fn rebuild_search_index(&self) -> CoreResult<()> {
+        let (reply, receiver) = std::sync::mpsc::channel();
+        self.commands
+            .send(WriterCommand::RebuildSearchIndex { reply })
+            .map_err(|_| CoreError::Storage("writer thread is gone".into()))?;
+        receiver
+            .recv()
+            .map_err(|_| CoreError::Storage("writer thread did not respond".into()))?
+    }
+
     /// Commit one bounded import batch: the run row, raw observations, and
     /// normalized events. Facts replay idempotently.
     pub fn queue_import_batch(
@@ -367,6 +385,9 @@ pub struct ParseRunRecord {
     pub state: String,
     pub counts_json: String,
     pub diagnostics_json: String,
+    /// Recorded time assumptions behind this run, as JSON. Empty means the
+    /// run needed none; it never means "assumed and unrecorded".
+    pub assumptions_json: String,
 }
 
 /// One extracted record before interpretation, keyed by its exact locator.
@@ -393,6 +414,7 @@ fn parse_run_op(run: &ParseRunRecord) -> WriteOp {
             "state",
             "counts_json",
             "diagnostics_json",
+            "assumptions_json",
         ],
         vec![
             Param::Text(run.id.clone()),
@@ -403,6 +425,7 @@ fn parse_run_op(run: &ParseRunRecord) -> WriteOp {
             Param::Text(run.state.clone()),
             Param::Text(run.counts_json.clone()),
             Param::Text(run.diagnostics_json.clone()),
+            Param::Text(run.assumptions_json.clone()),
         ],
     )
 }
@@ -642,6 +665,11 @@ fn writer_loop(path: &Path, receiver: std::sync::mpsc::Receiver<WriterCommand>) 
                             "writer connection could not be opened".into(),
                         )));
                     }
+                    WriterCommand::RebuildSearchIndex { reply } => {
+                        let _ = reply.send(Err(CoreError::Storage(
+                            "writer connection could not be opened".into(),
+                        )));
+                    }
                     WriterCommand::Shutdown { reply } => {
                         let _ = reply.send(Ok(()));
                         return;
@@ -655,6 +683,13 @@ fn writer_loop(path: &Path, receiver: std::sync::mpsc::Receiver<WriterCommand>) 
         match command {
             WriterCommand::Execute { batch, reply } => {
                 let result = run_batch(&connection, &batch);
+                let _ = reply.send(result);
+            }
+            WriterCommand::RebuildSearchIndex { reply } => {
+                let result = connection
+                    .execute("INSERT INTO events_fts (events_fts) VALUES ('rebuild')", [])
+                    .map(|_| ())
+                    .map_err(|e| CoreError::Storage(format!("search index rebuild: {e}")));
                 let _ = reply.send(result);
             }
             WriterCommand::Shutdown { reply } => {

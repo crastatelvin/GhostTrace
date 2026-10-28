@@ -25,7 +25,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::domain::event::{Event, NamedEventTimeRef};
-use crate::domain::time::{Epoch, EventTime, RawTimeValue, TimeSemantic, TimeStatus, TimeUnit};
+use crate::domain::time::{
+    Epoch, EventTime, RawTimeValue, TimeAssumption, TimeSemantic, TimeStatus, TimeUnit,
+};
 use crate::error::{CoreError, CoreResult};
 use crate::integrity::hash::{digest_file, sha256_hex};
 use crate::storage::read::CaseReader;
@@ -46,6 +48,68 @@ pub const MAX_DIAGNOSTICS: usize = 100;
 const BATCH_RECORDS: usize = 500;
 /// The active revision label shared by all import adapters.
 pub const ACTIVE_REVISION: &str = "r1";
+
+/// The time assumptions a run records, as JSON for `parse_runs.assumptions_json`.
+///
+/// Every assumption that can position a timestamp and cannot be derived from the
+/// record itself is listed: an operator-supplied year or zone, or a declared
+/// time interpretation. An empty list means the run needed none, never that an
+/// assumption was made and hidden.
+pub(crate) fn recorded_assumptions(
+    format: LogFormat,
+    request: &ImportRequest<'_>,
+) -> CoreResult<String> {
+    let mut assumptions: Vec<TimeAssumption> = Vec::new();
+    match format {
+        LogFormat::Syslog3164 => {
+            let zone = request
+                .syslog
+                .timezone
+                .as_deref()
+                .filter(|zone| !zone.trim().is_empty());
+            let year = request.syslog.year;
+            if zone.is_some() || year.is_some() {
+                assumptions.push(TimeAssumption {
+                    description: "RFC 3164 stamps carry neither year nor zone; the operator supplied the missing parts"
+                        .to_string(),
+                    zone: zone.map(str::to_string),
+                    year_assumed: year,
+                });
+            }
+        }
+        LogFormat::Syslog5424 => {
+            // RFC 5424 carries an explicit offset; nothing is assumed.
+        }
+        LogFormat::Jsonl => {
+            assumptions.push(TimeAssumption {
+                description: format!(
+                    "record times are read with the declared format `{}`",
+                    request.jsonl.time_format.id()
+                ),
+                zone: None,
+                year_assumed: None,
+            });
+        }
+        LogFormat::JournalExport => {
+            assumptions.push(TimeAssumption {
+                description: "realtime timestamps are microseconds since the Unix epoch"
+                    .to_string(),
+                zone: None,
+                year_assumed: None,
+            });
+        }
+        LogFormat::Browser => {
+            assumptions.push(TimeAssumption {
+                description: "browser times are microseconds since 1601-01-01 (Chromium) or 1970-01-01 (Firefox PRTime)"
+                    .to_string(),
+                zone: None,
+                year_assumed: None,
+            });
+        }
+    }
+    serde_json::to_string(&assumptions)
+        .map_err(|error| CoreError::Storage(format!("assumptions json: {error}")))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
@@ -483,6 +547,7 @@ pub fn run_import(
         state: "running".to_string(),
         counts_json: counts.to_json(),
         diagnostics_json: "[]".to_string(),
+        assumptions_json: recorded_assumptions(format, request)?,
     };
     writer.queue_parse_run(&run)?;
 
@@ -828,11 +893,14 @@ impl Committer<'_> {
     fn flush(&mut self) -> CoreResult<()> {
         self.run.counts_json = self.counts.to_json();
         self.run.diagnostics_json = self.diagnostics.to_json();
+        // Each parse run is its own revision: re-importing the same object with
+        // different assumptions records a new run (a new revision) instead of
+        // overwriting the earlier one, so an old report stays reproducible.
         self.writer.queue_import_batch(
             self.run,
             &self.pending_observations,
             &self.pending_events,
-            ACTIVE_REVISION,
+            self.run_id,
         )?;
         self.pending_observations.clear();
         self.pending_events.clear();

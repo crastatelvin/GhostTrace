@@ -107,7 +107,7 @@ it never deletes evidence.
 ```bash
 ghosttrace timeline --case <CASE> [--last 24h] [--until 2026-10-27T12:00:00Z] \
   [--kind file.observed] [--host HOST] [--source capture.metadata.v1] \
-  [--unresolved] [--revision r1] [--limit 200] [--cursor SECONDS:NANOS:EVENT_ID]
+  [--unresolved] [--revision RUN_ID] [--limit 200] [--cursor SECONDS:NANOS:EVENT_ID]
 ```
 
 - `--last` anchors to the **newest chosen instant in the case** (or to
@@ -122,12 +122,56 @@ ghosttrace timeline --case <CASE> [--last 24h] [--until 2026-10-27T12:00:00Z] \
   filters.
 - Paging is keyset-based: pass `next_cursor` back as `--cursor`. Repeating a
   query returns the identical page; no skips, no duplicates.
+- `--revision` reads one parse run. Each import creates its own revision, so
+  re-importing with different assumptions does not overwrite the earlier one.
+  Default: the newest revision of the latest acquisition. The literal `r1`
+  remains valid and is what capture-only cases use.
 
 ```json
 {"revision":"r1","resolved_view":true,"after_seconds":1792999200,
  "before_seconds":null,"anchor_seconds":1793085600,
  "rows":[{"event_id":"evt-…","kind":"file.observed","chosen_seconds":1793085186,
           "chosen_nanos":0,"time_status":"resolved","host_claim":null}],
+ "next_cursor":null}
+```
+
+## `search`
+
+```bash
+ghosttrace search --case <CASE> --text 'sshd -root "accepted password"' \
+  [--kind auth.login_succeeded] [--host HOST] [--source parser] \
+  [--after SECONDS] [--before SECONDS] [--unresolved] \
+  [--revision RUN_ID] [--limit 200] [--cursor SECONDS:NANOS:EVENT_ID]
+```
+
+Full-text search over **indexed** event summary, kind, and host text. Raw
+field values and evidence bytes are not indexed; use `timeline` and event
+detail to reach them.
+
+The grammar is deliberately tiny, and anything outside it is **rejected with
+an explanation** rather than reinterpreted:
+
+| Accepted | Meaning |
+| --- | --- |
+| `sshd accepted` | both terms must occur (implicit AND) |
+| `"accepted password"` | an adjacent phrase |
+| `-root` | exclude a term (never the only term) |
+| `-` inside a word | literal, e.g. `host-a` |
+| `""` doubled inside a phrase | a literal quote |
+
+| Rejected | Why |
+| --- | --- |
+| `col:term`, `prefix*`, `a AND b`, `NEAR` | FTS5 operators and column syntax |
+| `"unterminated`, empty input, > 4 KiB | incomplete, empty, or oversized |
+
+The validated expression is passed to FTS5 as a bound parameter; operator
+text never becomes SQL. Filters, ordering, and keyset paging are identical to
+`timeline`, including the separate `--unresolved` view.
+
+```json
+{"text":"accepted password","revision":"pr-…","resolved_view":true,
+ "rows":[{"event_id":"ev-…","kind":"auth.login_succeeded","summary":"sshd accepted password for bob from 10.0.0.6",
+          "host_claim":"host","chosen_seconds":1793091600,"chosen_nanos":0,"time_status":"resolved"}],
  "next_cursor":null}
 ```
 
@@ -209,7 +253,7 @@ Builds a versioned report from recorded rows only and publishes it atomically:
 
 ```bash
 ghosttrace report --case <DIR>.ghosttrace-case --output /cases/reports \
-  [--acquisition <ID>] [--limit 500] [--report-id NAME]
+  [--acquisition <ID>] [--revision RUN_ID] [--limit 500] [--report-id NAME]
 ```
 
 Output: `{"report_id","format","directory","json","html","objects","events","gaps"}`.
@@ -221,6 +265,13 @@ An existing report directory is never overwritten: the command exits `1` and
 leaves the previous export untouched. A failure during publication removes the
 staging directory, so no partial export appears complete. See
 [reports.md](reports.md).
+
+The timeline is pinned to **one revision**: `--revision` names it, and by
+default it is the newest parse run of the acquisition. Because a re-import
+records another revision instead of replacing the earlier one, pinning makes
+the report reproducible — building the same selection again yields the same
+timeline. The pinned run id appears in `report.json` (`revision`) and in the
+HTML provenance line.
 
 ## Packaging an early build
 

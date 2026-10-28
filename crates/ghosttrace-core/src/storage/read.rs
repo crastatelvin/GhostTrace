@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 
 use crate::domain::query::{EventPage, EventQuery, EventRow, TimeCursor};
 use crate::error::{CoreError, CoreResult};
@@ -78,16 +79,46 @@ impl CaseReader {
             .map_err(|e| CoreError::Storage(format!("table probe {name}: {e}")))
     }
 
-    /// Newest chosen instant in the case, used as the anchor for relative
-    /// ranges such as `--last 24h`. `None` when the case has no resolved time.
-    pub fn latest_chosen_seconds(&self) -> CoreResult<Option<i64>> {
+    /// Newest chosen instant, used as the anchor for relative ranges such as
+    /// `--last 24h`. Scoped to one revision when given, so the window ends at
+    /// the newest event the same view can see; `None` when there is no
+    /// resolved time.
+    pub fn latest_chosen_seconds(&self, revision: Option<&str>) -> CoreResult<Option<i64>> {
         self.connection
             .query_row(
-                "SELECT max(chosen_seconds) FROM events WHERE chosen_seconds IS NOT NULL",
-                [],
+                "SELECT max(chosen_seconds) FROM events
+                 WHERE chosen_seconds IS NOT NULL
+                   AND (?1 IS NULL OR revision = ?1)",
+                [revision],
                 |row| row.get(0),
             )
             .map_err(|e| CoreError::Storage(format!("latest time: {e}")))
+    }
+
+    /// The newest parse run (revision) of one acquisition, or of the latest
+    /// acquisition when `acquisition_id` is `None`. `None` when the case has
+    /// no parse run at all.
+    ///
+    /// Each import records its own revision, so "the newest one" is what a
+    /// timeline or report should show by default; earlier revisions stay
+    /// selectable by id so an old result can be reproduced exactly.
+    pub fn latest_revision(&self, acquisition_id: Option<&str>) -> CoreResult<Option<String>> {
+        let connection = self.connection();
+        let revision = connection
+            .query_row(
+                "SELECT p.id FROM parse_runs p
+                 WHERE (?1 IS NULL OR p.acquisition_id = ?1)
+                   AND (?1 IS NOT NULL OR p.acquisition_id = (
+                        SELECT id FROM acquisitions
+                        ORDER BY started_seconds DESC, id DESC LIMIT 1))
+                 ORDER BY p.rowid DESC
+                 LIMIT 1",
+                [acquisition_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| CoreError::Storage(format!("latest revision: {e}")))?;
+        Ok(revision)
     }
 
     /// Execute one timeline query. Both views use keyset pagination with the
