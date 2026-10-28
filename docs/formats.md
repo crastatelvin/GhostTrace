@@ -258,6 +258,81 @@ claim is made that every release of Chromium or Firefox uses one of them.
 Unrecognized contracts are rejected with `unsupported_format` and the missing
 required column names rather than parsed on a best-effort basis.
 
+## Windows event logs (EVTX)
+
+A captured `.evtx` file is detected by its `ElfFile\0` signature, or declared
+with `--format evtx`. The container and BinXml are decoded by `evtx` 0.13.0;
+the adapter preserves the structured `System` and `EventData`/`UserData`
+fields. Provider message resources are never loaded, so a missing message table
+cannot change an event's meaning. The decoder does not resolve DTDs or external
+entities, and the adapter never executes or fetches anything named by a record:
+payload strings are stored as text and escaped only when displayed.
+
+### Locators
+
+Each record is one raw observation with locator kind `binary_record` and
+identity `evtx-record:<EventRecordID>`. Record IDs are scoped to the captured
+object. Exported/selected logs renumber the chunk-local record header from 1, so
+that header value is kept only as `chunk_record_id`; the payload
+`EventRecordID` is the locator. A record without one falls back to
+`evtx-record-ordinal:<n>` and records `evtx_missing_record_id`.
+
+### Time
+
+| Field | Meaning | Handling |
+|---|---|---|
+| `System/TimeCreated` | logging time | UTC, parsed exactly; raw text preserved; 100 ns FILETIME source ticks stored at microsecond precision |
+| Sysmon 1 `UtcTime` | payload occurrence time | no zone marker, read as UTC with that assumption recorded; millisecond precision |
+
+The logging time is the chosen timeline time (the first named time). The
+payload time is a second named `occurred` time and never replaces it. An
+unreadable `System/TimeCreated` stays `invalid`; the record header timestamp is
+preserved in mapped fields but not substituted silently. When the payload has no
+`System/TimeCreated` at all, the header timestamp is used as the logging time
+and that substitution is recorded as an assumption.
+
+### Tested mappings (version 1)
+
+| Provider | Event | Kind | Mapped fields |
+|---|---|---|---|
+| `Microsoft-Windows-Security-Auditing` | 4625 | `auth.login_failed` | `user`, `domain`, `service` = `logon_type:<n>`, `logon_type`, `ip`, `workstation`, `auth_package`, `logon_process` |
+| `Microsoft-Windows-Security-Auditing` | 4624 | `auth.login_succeeded` | same as 4625 |
+| `Microsoft-Windows-Sysmon` | 1 | `process.execute` | `path` (`Image`), `sha256` (from `Hashes`), `user`, `parent_path`, `command_line`, `process_id` |
+| `Microsoft-Windows-Security-Auditing` | 4688 | `process.execute` | `path` (`NewProcessName`), `sha256` (from `Hashes`), `creator_user`, `parent_path`, `command_line`, `process_id` |
+
+`service` is the logon type because it is the recorded discriminator that is
+always present; the authentication package is kept separately. The 4688 creator
+is mapped as `creator_user`, not `user`: the account that created a process is
+not the account the process runs as.
+
+Every other provider/event stays `windows.event_log` with `provider`,
+`channel`, `event_id`, `record_id`, `chunk_record_id`, `record_ordinal`,
+`computer`, and `version`. A mapped field is written only when the record
+carries it: a `-` account, an absent digest, or a malformed `Hashes` value stays
+absent rather than being guessed. Adding a mapping requires a test next to
+these.
+
+### Bounds, corruption, and truncation
+
+- A record larger than `--max-record-bytes` produces `record_too_large` and no
+  event.
+- `--max-records` produces `record_limit` and a `partial` run.
+- A chunk or record the decoder cannot read produces `evtx_parse_error` with the
+  chunk or record locator, and the run ends `partial`.
+- The header's chunk counter is stale on logs that were not cleanly closed, so
+  truncation is judged from the container layout: the chunk area after the 4 KiB
+  header must be a whole number of 64 KiB chunks. A trailing partial chunk
+  produces `truncated_evidence` and a `partial` run even when the parser returns
+  the complete chunks it can read. A file shorter than the header block is
+  flagged the same way with no records. A prefix cut exactly on a chunk boundary
+  is indistinguishable from a shorter complete log and is not claimed as
+  truncation.
+- A file without a readable 128-byte EVTX header fails the import (exit `2`) and
+  records no run; it is never treated as an empty log.
+- Carved records are not enabled (`recover_records` stays off). If a decoder
+  ever marks a record as recovered, it is imported with an
+  `evtx_recovered_record` diagnostic.
+
 ## Entity fields (P5.1)
 
 Entity resolution reads only these recorded field names; it never parses a
@@ -290,6 +365,8 @@ always a candidate, and equal digests always mean equal bytes only.
 - Rollback-journal browser packages, interpreted virtual tables/views, and
   guessing a browser family or missing sidecar from partial evidence.
 - Executing or importing browser download contents; only metadata is read.
+- Rendering provider messages from Windows message DLLs, resolving XML
+  entities/DTDs, or carving deleted records from unallocated EVTX chunk space.
 
 ## Rule parameters (P5.2)
 

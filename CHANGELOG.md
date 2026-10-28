@@ -164,6 +164,18 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P8.1 (2026-10-28): structured EVTX ingestion — captured Windows event logs
+  are detected by their `ElfFile\0` signature or declared with
+  `--format evtx`; structured `System`/`EventData` fields are preserved and each
+  record carries its payload `EventRecordID` as the locator. Tested mappings
+  cover Security 4624/4625 and Sysmon 1/Security 4688; every other provider
+  stays a structured `windows.event_log` observation. The logging time is the
+  UTC `System/TimeCreated`; Sysmon 1 adds a separate `occurred` time from
+  `UtcTime` with the UTC assumption recorded. Unreadable chunks and a truncated
+  chunk area end the run `partial` instead of silently succeeding, a header-less
+  file is refused, provider message resources are never loaded, and payload
+  text (including DTD/entity-looking strings) is preserved verbatim. Three real
+  sample logs are tracked with provenance in `tests/fixtures/evtx/`.
 - P7 (2026-10-28): interactive terminal workflow — `ghosttrace tui` with a
   paginated timeline, shared-grammar search, exact kind/host/source/time
   filters, event detail, five-rule findings, a status/progress line, and an

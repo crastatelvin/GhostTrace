@@ -56,10 +56,25 @@ impl Harness {
         self.capture_with_mtime(files, Some(mtime_seconds))
     }
 
+    /// Capture with an explicit per-file bound. The EVTX fixtures are larger
+    /// than the 1 MiB default used by the synthetic text fixtures.
+    pub fn capture_with_limit(&mut self, files: &[(&str, &[u8])], max_file_bytes: u64) -> String {
+        self.capture_inner(files, None, max_file_bytes)
+    }
+
     fn capture_with_mtime(
         &mut self,
         files: &[(&str, &[u8])],
         mtime_seconds: Option<i64>,
+    ) -> String {
+        self.capture_inner(files, mtime_seconds, 1 << 20)
+    }
+
+    fn capture_inner(
+        &mut self,
+        files: &[(&str, &[u8])],
+        mtime_seconds: Option<i64>,
+        max_file_bytes: u64,
     ) -> String {
         self.captures += 1;
         let evidence = self.dir.path().join(format!("evidence-{}", self.captures));
@@ -87,7 +102,7 @@ impl Harness {
             follow_symlinks: false,
             max_depth: 8,
             max_entries: 10_000,
-            max_file_bytes: 1 << 20,
+            max_file_bytes,
             case_directory: self.session.layout().root().to_path_buf(),
         };
         let options =

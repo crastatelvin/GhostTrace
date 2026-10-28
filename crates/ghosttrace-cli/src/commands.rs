@@ -400,6 +400,8 @@ pub enum FormatArg {
     JournalExport,
     #[value(name = "browser")]
     Browser,
+    #[value(name = "evtx")]
+    Evtx,
 }
 
 impl FormatArg {
@@ -410,6 +412,7 @@ impl FormatArg {
             FormatArg::Syslog3164 => LogFormat::Syslog3164,
             FormatArg::JournalExport => LogFormat::JournalExport,
             FormatArg::Browser => LogFormat::Browser,
+            FormatArg::Evtx => LogFormat::Evtx,
         }
     }
 }

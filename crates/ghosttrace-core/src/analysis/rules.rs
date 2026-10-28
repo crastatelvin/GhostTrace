@@ -35,10 +35,10 @@ pub const RULES_VERSION: &str = "1";
 pub const MAX_EVENTS: usize = 200_000;
 pub const MAX_FINDINGS_PER_RULE: usize = 200;
 
-const AUTH_FAILURE: &str = "auth.login_failed";
-const AUTH_SUCCESS: &str = "auth.login_succeeded";
-const DOWNLOAD: &str = "browser.download";
-const PROCESS_EXECUTE: &str = "process.execute";
+pub(crate) const AUTH_FAILURE: &str = "auth.login_failed";
+pub(crate) const AUTH_SUCCESS: &str = "auth.login_succeeded";
+pub(crate) const DOWNLOAD: &str = "browser.download";
+pub(crate) const PROCESS_EXECUTE: &str = "process.execute";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuleMetadata {

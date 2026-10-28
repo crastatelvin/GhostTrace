@@ -305,9 +305,9 @@ ghosttrace import --case <DIR>.ghosttrace-case \
 `--path` is the captured relative path; `--object <ID>` selects the evidence
 object directly. Exactly one is required. `--acquisition` selects a capture
 (default: latest). `--format` accepts `jsonl`, `syslog-5424`, `syslog-3164`,
-`journal-export`, or `browser` and overrides signature detection; both detected
-and declared formats are reported. Native `.journal` files are not parsed:
-capture a `journalctl -o export` stream first.
+`journal-export`, `browser`, or `evtx` and overrides signature detection; both
+detected and declared formats are reported. Native `.journal` files are not
+parsed: capture a `journalctl -o export` stream first.
 
 For browser history, `--path` names the captured main SQLite database; captured
 `<path>-wal` and `<path>-shm` sidecars in the same acquisition are found
@@ -318,6 +318,12 @@ in WAL mode without its WAL imports as `partial` with `wal_missing`; a `-shm`
 without `-wal` or any `-journal` sidecar is rejected with exit `2`. View,
 virtual-table, corrupt-page, and missing-column failures also exit `2` as
 `unsupported_format`/`corrupt_evidence` and record no run.
+
+A captured Windows event log (`.evtx`) is detected by its `ElfFile\0`
+signature or declared with `--format evtx`. It has no mapping flags: the
+adapter's fixed, tested provider mappings are listed in
+[formats.md](formats.md#windows-event-logs-evtx). Unreadable chunks and
+truncated chunk areas are reported and end the run `partial`.
 
 Output: `{"run_id","acquisition_id","evidence_id","path","parser_id",
 "parser_version","detected_format","declared_format","state","records",

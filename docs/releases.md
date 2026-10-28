@@ -124,3 +124,25 @@ release packaging.
   machines here). They remain P10 release-target smoke checks, not passes.
 - `0.3.0-beta.1` promotion still waits on the open accessibility and
   release-target gate items recorded above; no tag was created by P7.
+
+## P8.1 structured EVTX ingestion (2026-10-28)
+
+- Three real Windows logs from the public `evtx` parser sample set are tracked
+  with provenance and SHA-256 (`tests/fixtures/evtx/README.md`): Security 4625
+  (failed logon), Security 4624 (successful logons), and Sysmon 1 (process
+  creation). The `evtx` 0.13.0 crate is built without its default
+  `multithreading`/`evtx_dump` features.
+- Import tests read them through capture and assert the mapped kinds and
+  fields, payload `EventRecordID` locators (unique per object), UTC logging
+  time, the Sysmon payload occurrence time with its recorded UTC assumption,
+  and that unmapped providers stay generic observations.
+- The Sysmon fixture contains 8 unreadable chunks: the run ends `partial` with
+  `evtx_parse_error` diagnostics. A truncated chunk area (5000-byte and
+  70000-byte prefixes) ends `partial` with `truncated_evidence` even though the
+  parser returns the chunks it can read; a 100-byte prefix fails with exit 2
+  and records no run. The header's own chunk counter is stale on these dirty
+  logs, so truncation is judged from the 64 KiB chunk alignment.
+- No provider message DLL is loaded, no DTD/entity is resolved, and nothing
+  named by a record is executed or fetched. A hostile payload string is asserted
+  to survive verbatim in the raw observation.
+- Remaining P8 work (P8.2 parser worker isolation) is not started.

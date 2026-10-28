@@ -1031,11 +1031,38 @@ the open accessibility/release-target items recorded in `docs/releases.md`.
 
 **Consumes:** Adapter contract and raw/time model. **Produces:** Supported EVTX events with provider/version-qualified interpretation.
 
-- [ ] Test known provider/channel/event version, exact record ID scope, UTC logging time, payload occurrence time, missing rendering resources, corrupted/truncated chunks.
-- [ ] Implement parser wrapper preserving structured system/payload fields and strongest available raw locator.
-- [ ] Test DTD/external entity/network behavior remains disabled/inert; do not run provider resources as code.
-- [ ] Define the tested auth/process mappings consumed by rules; unknown providers remain structured observations.
-- [ ] Commit: `feat: import captured Windows event logs with provenance`.
+- [x] Test known provider/channel/event version, exact record ID scope, UTC logging time, payload occurrence time, missing rendering resources, corrupted/truncated chunks.
+  `tests/evtx_import.rs` reads three real tracked logs through capture: Sysmon 1
+  asserts provider/channel/version/computer, a payload `EventRecordID` locator
+  that is unique per object, a resolved UTC logging time, and a resolved
+  `occurred` time whose UTC assumption is recorded; Security 4625/4624 assert
+  the auth kinds and mapped account fields; the Sysmon fixture's 8 unreadable
+  chunks produce `evtx_parse_error` and a `partial` run. Truncated 5000- and
+  70000-byte prefixes produce `truncated_evidence` and `partial`; a 100-byte
+  prefix fails with no run. Unit tests cover the fallback locator, invalid
+  times, missing fields, and oversize records. Provider message resources are
+  never loaded, so a missing message table cannot change a record's meaning.
+- [x] Implement parser wrapper preserving structured system/payload fields and strongest available raw locator.
+  `crates/ghosttrace-core/src/ingest/evtx.rs` keeps the decoded
+  `System`/`EventData` JSON as the raw observation, maps a tested set of fields
+  into `mapped_fields_json`, and uses locator kind `binary_record` with
+  `evtx-record:<EventRecordID>` (the chunk header id is chunk-local on exported
+  logs and is kept only as `chunk_record_id`). Detection is the `ElfFile\0`
+  signature; `--format evtx` declares it.
+- [x] Test DTD/external entity/network behavior remains disabled/inert; do not run provider resources as code.
+  The decoder is used without message-resource loading, and the adapter only
+  reads JSON values. A unit test feeds a payload containing a `DOCTYPE … SYSTEM
+  "http://…"` string and `&xxe;` and asserts both survive verbatim in the raw
+  observation with no expansion; no code path executes or fetches anything
+  named by a record.
+- [x] Define the tested auth/process mappings consumed by rules; unknown providers remain structured observations.
+  Security 4625 → `auth.login_failed`, 4624 → `auth.login_succeeded` (both
+  `user`/`domain`/`service` = `logon_type:<n>`/`ip`/…); Sysmon 1 and Security
+  4688 → `process.execute` (`path`/`sha256`/…). An analysis test asserts the
+  auth rule is `evaluated` with the mapped failed logon considered, not skipped
+  for missing fields. Every other provider/event stays `windows.event_log` with
+  its provider, channel, event id, record id, and computer.
+- [x] Commit: `feat: import captured Windows event logs with provenance`.
 
 #### P8.2 — Isolated risky parsers and bounded IPC
 
@@ -1176,7 +1203,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P6 | P6.3 | Desktop analysis/notes | [x] |
 | P6 | P6.4 | Desktop reports/accessibility | [x] |
 | P7 | P7 | TUI and terminal safety | [x] |
-| P8 | P8.1 | EVTX adapters | [ ] |
+| P8 | P8.1 | EVTX adapters | [x] |
 | P8 | P8.2 | Isolated parser workers | [ ] |
 | P9 | P9.1 | Signatures/standard private keys/trust | [ ] |
 | P9 | P9.2 | Redacted packages/backup/restore | [ ] |
@@ -1187,6 +1214,24 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P12 | P12 | Optional read-only local API | [ ] |
 
 For each completed task, append: `Issue: real URL; PR: real URL; commit: actual SHA; verified: command(s), OS, result; reviewer: name; date: actual completion date`. Keep generated benchmark evidence and significant limitation decisions linked from the task. Use GitHub milestones for release gates and labels `area:capture`, `area:ingest`, `area:storage`, `area:gui`, `area:analysis`, `area:integrity`, `area:docs`, `type:bug`, `type:security`, `status:blocked`, `good-first-issue`, and `help-wanted`.
+
+### P8.1 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-28); the fixture catalog verified 9 entries.
+- Real logs: `tests/evtx_import.rs` (4 tests) plus 14 unit tests in
+  `ingest::evtx` over tracked fixtures from the public `evtx` sample set
+  (`tests/fixtures/evtx/README.md`, SHA-256 in `tests/fixtures/catalog.toml`).
+- CLI smoke on Linux x86_64: `case create` → `scan` → `import` of `sysmon.evtx`
+  (358 records, `partial`, 8 `evtx_parse_error` chunk diagnostics) → `import` of
+  the Security sample (7 records, `completed`) → `timeline` (a
+  `auth.login_failed` row with a resolved UTC time) → `analyze` (the auth rule
+  `evaluated`, 1 event considered).
+- Limits: provider message resources are not loaded; DTD/entity strings are
+  inert text; record carving stays off; a truncated chunk area is detected from
+  64 KiB alignment because the header chunk counter is stale on dirty logs.
+- Open: P8.2 parser worker isolation is not started.
 
 ### P7 verification record
 

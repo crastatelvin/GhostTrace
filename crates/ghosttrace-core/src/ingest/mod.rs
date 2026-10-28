@@ -13,6 +13,7 @@
 //!   type or time.
 
 pub mod browser;
+pub mod evtx;
 pub mod journal;
 pub mod jsonl;
 pub mod syslog;
@@ -106,6 +107,14 @@ pub(crate) fn recorded_assumptions(
                 year_assumed: None,
             });
         }
+        LogFormat::Evtx => {
+            assumptions.push(TimeAssumption {
+                description: "EVTX System/TimeCreated is the UTC logging time; provider message resources are never loaded and unmapped providers keep a generic kind"
+                    .to_string(),
+                zone: Some("UTC".to_string()),
+                year_assumed: None,
+            });
+        }
     }
     serde_json::to_string(&assumptions)
         .map_err(|error| CoreError::Storage(format!("assumptions json: {error}")))
@@ -119,15 +128,18 @@ pub enum LogFormat {
     JournalExport,
     /// A captured SQLite browser package; Chromium/Firefox is decided by schema.
     Browser,
+    /// A captured Windows Event Log (`.evtx`) container.
+    Evtx,
 }
 
 impl LogFormat {
-    pub const ALL: [LogFormat; 5] = [
+    pub const ALL: [LogFormat; 6] = [
         LogFormat::Jsonl,
         LogFormat::Syslog5424,
         LogFormat::Syslog3164,
         LogFormat::JournalExport,
         LogFormat::Browser,
+        LogFormat::Evtx,
     ];
 
     pub fn id(self) -> &'static str {
@@ -137,6 +149,7 @@ impl LogFormat {
             LogFormat::Syslog3164 => "syslog-3164",
             LogFormat::JournalExport => "journal-export",
             LogFormat::Browser => "browser",
+            LogFormat::Evtx => "evtx",
         }
     }
 
@@ -148,6 +161,7 @@ impl LogFormat {
             LogFormat::JournalExport => "journal.export",
             // The concrete browser adapter is chosen from the validated schema.
             LogFormat::Browser => "browser.package",
+            LogFormat::Evtx => "evtx.records",
         }
     }
 
@@ -158,6 +172,7 @@ impl LogFormat {
             "syslog-3164" => Some(LogFormat::Syslog3164),
             "journal-export" => Some(LogFormat::JournalExport),
             "browser" => Some(LogFormat::Browser),
+            "evtx" => Some(LogFormat::Evtx),
             _ => None,
         }
     }
@@ -165,6 +180,11 @@ impl LogFormat {
     /// Signature detection over a bounded prefix. Ambiguous input returns
     /// `None` and requires an explicit format.
     pub fn detect(prefix: &[u8]) -> Option<Self> {
+        // The EVTX signature is at byte zero; it is checked before the leading
+        // whitespace skip because a binary header has no such thing.
+        if prefix.starts_with(b"ElfFile\0") {
+            return Some(LogFormat::Evtx);
+        }
         let start = prefix.iter().position(|byte| !byte.is_ascii_whitespace())?;
         let rest = &prefix[start..];
         if rest.starts_with(b"SQLite format 3\0") {
@@ -567,6 +587,9 @@ pub fn run_import(
             pending_events: Vec::new(),
         };
         match format {
+            LogFormat::Evtx => {
+                evtx::import(&mut committer, &store_path, request, &mut cancelled)?;
+            }
             LogFormat::JournalExport => {
                 let mut reader = journal::Reader::new(&mut records, request.max_record_bytes);
                 loop {
@@ -652,7 +675,7 @@ pub fn run_import(
                         LogFormat::Jsonl => jsonl::parse_line(text, &locator, &request.jsonl),
                         LogFormat::Syslog5424 => syslog.parse_line(text, &locator, true),
                         LogFormat::Syslog3164 => syslog.parse_line(text, &locator, false),
-                        LogFormat::JournalExport | LogFormat::Browser => {
+                        LogFormat::JournalExport | LogFormat::Browser | LogFormat::Evtx => {
                             unreachable!("handled above")
                         }
                     };
@@ -1039,7 +1062,9 @@ fn config_digest(format: LogFormat, request: &ImportRequest<'_>) -> CoreResult<S
             Value::String(request.jsonl.default_kind.clone()),
         );
         config.insert("jsonl".into(), Value::Object(jsonl));
-    } else {
+    } else if format != LogFormat::Evtx {
+        // EVTX has no configurable mapping; the other adapters keep their
+        // recorded syslog defaults so their existing run identities do not move.
         let mut syslog = serde_json::Map::new();
         syslog.insert(
             "timezone".into(),

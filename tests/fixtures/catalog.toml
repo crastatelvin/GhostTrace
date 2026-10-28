@@ -57,3 +57,24 @@ name = "browser-history"
 path = "browser/README.md"
 license = "Apache-2.0 OR MIT"
 sha256 = "0e26b1b8a1595ed3157d8dd342142e75edbc651616a38700c9c05f95a559dca3"
+
+# P8.1 EVTX fixtures: real Windows event logs from the public `evtx` parser
+# sample set (MIT OR Apache-2.0). Provenance and per-file purpose are in
+# `evtx/README.md`. The import tests read them as captured evidence.
+[[fixture]]
+name = "evtx-security-failure"
+path = "evtx/security-failure.evtx"
+license = "Apache-2.0 OR MIT"
+sha256 = "50c87926d2dfed9776906ffbcc77e61577940910a71fb1c1871860a4e2213456"
+
+[[fixture]]
+name = "evtx-security-success"
+path = "evtx/security-success.evtx"
+license = "Apache-2.0 OR MIT"
+sha256 = "5f29a03cf8c1b4bfbd82c4074ccc81ecfe85d7ee15375afc352ed5025c9a4d8d"
+
+[[fixture]]
+name = "evtx-sysmon"
+path = "evtx/sysmon.evtx"
+license = "Apache-2.0 OR MIT"
+sha256 = "e1817fd7241ad2b5b9660e179adec878d157f1fa25333e52aef263c69bcd970b"

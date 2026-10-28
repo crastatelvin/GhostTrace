@@ -30,6 +30,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 chrono-tz = "0.10.4"
 nix = { version = "0.30", default-features = false, features = ["fs", "user", "signal"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+evtx = { version = "0.13.0", default-features = false }
 crossterm = "0.29.0"
 uuid = { version = "1.28.0", features = ["v4"] }
 # Test-only tooling (plan Section 3); dev-dependencies inherit from this table.

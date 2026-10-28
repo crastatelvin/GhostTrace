@@ -44,16 +44,18 @@ pub enum FormatChoice {
     Syslog3164,
     JournalExport,
     Browser,
+    Evtx,
 }
 
 impl FormatChoice {
-    pub const ALL: [FormatChoice; 6] = [
+    pub const ALL: [FormatChoice; 7] = [
         FormatChoice::Auto,
         FormatChoice::Jsonl,
         FormatChoice::Syslog5424,
         FormatChoice::Syslog3164,
         FormatChoice::JournalExport,
         FormatChoice::Browser,
+        FormatChoice::Evtx,
     ];
 
     pub fn label(self) -> &'static str {
@@ -64,6 +66,7 @@ impl FormatChoice {
             FormatChoice::Syslog3164 => "Syslog RFC 3164",
             FormatChoice::JournalExport => "Journal export",
             FormatChoice::Browser => "Browser history",
+            FormatChoice::Evtx => "Windows event log",
         }
     }
 
@@ -75,6 +78,7 @@ impl FormatChoice {
             FormatChoice::Syslog3164 => Some(LogFormat::Syslog3164),
             FormatChoice::JournalExport => Some(LogFormat::JournalExport),
             FormatChoice::Browser => Some(LogFormat::Browser),
+            FormatChoice::Evtx => Some(LogFormat::Evtx),
         }
     }
 }

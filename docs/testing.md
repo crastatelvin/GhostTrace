@@ -14,6 +14,7 @@ UUIDs or wall-clock timestamps (plan Section 15).
 | CLI/subprocess contracts | Exit codes, JSON-safe output, progress on stderr, Ctrl-C handling | `tests/cli_*.rs` |
 | GUI accessible-tree tests | Controls reachable by accessible role/name; result supersession | `egui_kittest` (P6) |
 | TUI state/terminal safety | Key/action transitions, shared query identifiers, escaped control bytes, restoration on exit/error/unwind, no ANSI in pipes | `crates/ghosttrace-cli/tests/tui_actions.rs`, `terminal_safety.rs` (P7) |
+| EVTX ingestion | Real Windows logs: provider/channel/version mapping, exact payload record locators, UTC logging + payload occurrence time, unreadable chunks, truncated chunk areas, header-less refusal | `crates/ghosttrace-core/src/ingest/evtx.rs` unit tests, `tests/evtx_import.rs` (P8.1) |
 | Adversarial/fuzz | Oversize, truncation, hostile payloads, recovery from injected failures | `tests/hostile-inputs` fixtures, fuzz targets (P10) |
 | Platform traversal | no-follow containment, permissions, name encodings on each OS | platform test modules, run as an ordinary user |
 | Benchmarks | p95 query, ingest throughput, peak RSS on generated corpora | `cargo criterion` benches, `xtask` scale harness (P10) |
