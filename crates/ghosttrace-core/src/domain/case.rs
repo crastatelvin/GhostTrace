@@ -70,6 +70,18 @@ pub enum AcquisitionState {
 }
 
 impl AcquisitionState {
+    /// Stable text used by storage, CLI, and the desktop status line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AcquisitionState::Queued => "queued",
+            AcquisitionState::Running => "running",
+            AcquisitionState::Completed => "completed",
+            AcquisitionState::Partial => "partial",
+            AcquisitionState::Cancelled => "cancelled",
+            AcquisitionState::Failed => "failed",
+        }
+    }
+
     pub fn is_terminal(self) -> bool {
         matches!(
             self,

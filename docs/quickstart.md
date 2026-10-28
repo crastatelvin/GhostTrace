@@ -58,17 +58,17 @@ and the results of the FTS5/foreign-key/defensive-schema/WAL checks. It is
 the P0.1 evidence that the storage stack works as planned, recorded by
 `docs/releases.md`.
 
-## Run the desktop pilot
+## Run the desktop app
 
 ```bash
-cargo run -p ghosttrace-desktop -- --pilot-seconds 8
+cargo run -p ghosttrace-desktop
 ```
 
-The pilot (removed or folded into the real app shell in later phases) starts a
-bounded background job, keeps rendering frames while work streams in, and
-prints frame-pacing statistics on exit. `--renderer wgpu` selects the optional
-backend. With the `screenshot` cargo feature and the glow renderer,
-`EFRAME_SCREENSHOT_TO=shot.png` writes a frame capture.
+The P6.1 shell creates or opens a case, captures a source directory, and imports
+one captured object, with progress, cancellation, and recovery review. See
+[gui-guide.md](gui-guide.md). `--renderer wgpu` selects the optional backend.
+With the `screenshot` cargo feature and the glow renderer,
+`EFRAME_SCREENSHOT_TO=shot.png` writes one frame and exits.
 
 ## Working on tasks
 

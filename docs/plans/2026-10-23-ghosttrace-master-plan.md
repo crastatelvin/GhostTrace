@@ -911,11 +911,11 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Section 9 service contracts. **Produces:** Native case create/open/import workflow with progress, cancellation, and recovery review.
 
-- [ ] Test controls by accessible role/name: create case, invalid destination, source selection, time/method review, start/cancel, recovery choice.
-- [ ] Implement state/command/result messages; never access SQLite/evidence in render callbacks.
-- [ ] Test stale result/query IDs are ignored; errors remain actionable and preserve current case/selection.
-- [ ] Validate native dialog dependency only if standard path input is insufficient; keep behavior testable through explicit entered paths.
-- [ ] Commit: `feat: add native desktop case and evidence import workflows`.
+- [x] Test controls by accessible role/name: create case, invalid destination, source selection, time/method review, start/cancel, recovery choice.
+- [x] Implement state/command/result messages; never access SQLite/evidence in render callbacks.
+- [x] Test stale result/query IDs are ignored; errors remain actionable and preserve current case/selection.
+- [x] Validate native dialog dependency only if standard path input is insufficient; keep behavior testable through explicit entered paths.
+- [x] Commit: `feat: add native desktop case and evidence import workflows`.
 
 #### P6.2 — Timeline, search, histogram, and provenance inspector
 
@@ -1116,7 +1116,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P4 | P4.4 | FTS and time revisions | [x] |
 | P5 | P5.1 | Scoped entities/relationships | [x] |
 | P5 | P5.2 | Explainable rules/notes/views | [x] |
-| P6 | P6.1 | Desktop case/import | [ ] |
+| P6 | P6.1 | Desktop case/import | [x] |
 | P6 | P6.2 | Desktop timeline/provenance | [ ] |
 | P6 | P6.3 | Desktop analysis/notes | [ ] |
 | P6 | P6.4 | Desktop reports/accessibility | [ ] |

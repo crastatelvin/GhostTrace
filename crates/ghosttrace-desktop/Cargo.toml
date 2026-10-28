@@ -24,3 +24,7 @@ eframe = { workspace = true, default-features = false, features = ["accesskit", 
 egui.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+tempfile.workspace = true

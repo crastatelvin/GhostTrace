@@ -101,7 +101,13 @@ pub fn run(options: &Options) -> Result<Summary, String> {
             copy(&root.join(name), &staging.join(name))?;
         }
         fs::create_dir_all(staging.join("docs")).map_err(|e| format!("staging: {e}"))?;
-        for name in ["cli.md", "reports.md", "walkthrough.md", "releases.md"] {
+        for name in [
+            "cli.md",
+            "gui-guide.md",
+            "reports.md",
+            "walkthrough.md",
+            "releases.md",
+        ] {
             let source = root.join("docs").join(name);
             if source.is_file() {
                 copy(&source, &staging.join("docs").join(name))?;

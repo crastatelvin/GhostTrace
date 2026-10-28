@@ -140,3 +140,13 @@ file records implemented capability only.
   filters (no SQL) that run through the shared query path. `ghosttrace analyze`
   prints the report. No rule output expresses a probability of maliciousness
   (`docs/architecture.md`, `docs/storage.md`, `docs/formats.md`, `docs/cli.md`).
+- P6.1 (2026-10-28): native desktop case and evidence workflow — case
+  create/open with display zone, capture (protected copy or live best effort)
+  with limits and a pre-start summary, captured-object import with explicit
+  format and optional RFC 3164 zone/year, single-job progress and immediate
+  cancellation, and a recovery review for jobs interrupted at the previous
+  close (acknowledged, never auto-completed). State and command/result
+  messages keep SQLite and evidence access out of render callbacks, and stale
+  job results are discarded by id. The P0.1 pilot app is replaced by this shell.
+  Headless `egui_kittest` tests address controls by accessible name
+  (`docs/gui-guide.md`).
