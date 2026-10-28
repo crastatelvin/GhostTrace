@@ -312,7 +312,7 @@ impl CaseWriter {
         revision: &str,
     ) -> CoreResult<BatchResult> {
         self.execute(WriteBatch {
-            ops: event_ops(event, revision)?,
+            ops: event_ops(event, revision, None)?,
         })
     }
 
@@ -367,11 +367,48 @@ impl CaseWriter {
                 ],
             ));
         }
+        // Record where each event came from. The committer derives event ids
+        // from (run, locator, kind), so the same formula recovers the source
+        // observation without a second stateful link.
+        let kinds: std::collections::BTreeSet<&str> =
+            events.iter().map(|event| event.kind.as_str()).collect();
+        let mut sources: std::collections::HashMap<String, (&str, &str)> =
+            std::collections::HashMap::new();
+        for observation in observations {
+            for kind in &kinds {
+                sources.insert(
+                    domain::event::derived_event_id(
+                        &observation.parse_run_id,
+                        &observation.locator_identity,
+                        kind,
+                    ),
+                    (
+                        observation.evidence_id.as_str(),
+                        observation.locator_identity.as_str(),
+                    ),
+                );
+            }
+        }
         for event in events {
-            batch.ops.extend(event_ops(event, revision)?);
+            let source = sources
+                .get(&event.id)
+                .map(|(evidence_id, locator)| EventSource {
+                    evidence_id,
+                    locator_identity: locator,
+                });
+            batch.ops.extend(event_ops(event, revision, source)?);
         }
         self.execute(batch)
     }
+}
+
+/// Where an event came from: the evidence object and the exact locator inside
+/// it. Stored on the event row so analysis and drill-down never reverse the
+/// event identity to guess a source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventSource<'a> {
+    pub evidence_id: &'a str,
+    pub locator_identity: &'a str,
 }
 
 /// A parse run as stored (plan Section 8: versioned, replayable runs).
@@ -431,7 +468,11 @@ fn parse_run_op(run: &ParseRunRecord) -> WriteOp {
 }
 
 /// Build the row operations for one event and its times.
-fn event_ops(event: &domain::event::Event, revision: &str) -> CoreResult<Vec<WriteOp>> {
+fn event_ops(
+    event: &domain::event::Event,
+    revision: &str,
+    source: Option<EventSource<'_>>,
+) -> CoreResult<Vec<WriteOp>> {
     let primary = event.times.first();
     let chosen: Option<domain::time::UnixTime> =
         primary.and_then(|named| named.value.candidates.first().copied());
@@ -451,6 +492,8 @@ fn event_ops(event: &domain::event::Event, revision: &str) -> CoreResult<Vec<Wri
             "chosen_seconds",
             "chosen_nanos",
             "time_status",
+            "evidence_id",
+            "locator_identity",
         ],
         vec![
             Param::Text(event.id.clone()),
@@ -462,6 +505,8 @@ fn event_ops(event: &domain::event::Event, revision: &str) -> CoreResult<Vec<Wri
             Param::OptInt(chosen.map(|instant| instant.seconds)),
             Param::Int(chosen.map_or(0, |instant| i64::from(instant.nanos))),
             Param::Text(status),
+            Param::OptText(source.map(|source| source.evidence_id.to_string())),
+            Param::OptText(source.map(|source| source.locator_identity.to_string())),
         ],
     )];
     for named in &event.times {

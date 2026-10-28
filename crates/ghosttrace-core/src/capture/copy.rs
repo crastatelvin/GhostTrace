@@ -14,7 +14,7 @@
 //! crash between steps 6 and 7 leaves an unreferenced object: recovery
 //! reports it (never deletes it) so the operator can adopt or quarantine it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -704,6 +704,9 @@ pub fn run_acquisition(
     let mut coverage_rows: Vec<(String, CoverageOutcome)> = Vec::new();
     let mut objects: Vec<ManifestObject> = Vec::new();
     let mut object_rows = WriteBatch::new();
+    // Coverage key -> the object and exact encoded path it describes, so each
+    // event can point at its own source without re-deriving anything.
+    let mut event_sources: BTreeMap<String, (String, String)> = BTreeMap::new();
     let observed_at = created_seconds;
 
     for (root_index, walked_outcome) in &walked {
@@ -729,6 +732,10 @@ pub fn run_acquisition(
             };
             let object_id = format!("obj-{}", Uuid::new_v4());
             let store_subpath = copy.store_subpath.clone().unwrap_or_default();
+            event_sources.insert(
+                coverage_key(&root_encoded, &merged_outcome),
+                (object_id.clone(), copy.native_relative.encoded()),
+            );
             object_rows = object_rows
                 .push(WriteOp::fact(
                     "evidence_objects",
@@ -829,7 +836,7 @@ pub fn run_acquisition(
             Param::Text("[]".to_string()),
         ],
     ));
-    for (_, outcome) in &coverage_rows {
+    for (key, outcome) in &coverage_rows {
         let size = match outcome.status {
             CoverageStatus::Captured => "content",
             _ => "metadata",
@@ -859,6 +866,8 @@ pub fn run_acquisition(
                 "chosen_seconds",
                 "chosen_nanos",
                 "time_status",
+                "evidence_id",
+                "locator_identity",
             ],
             vec![
                 Param::Text(event.id.clone()),
@@ -870,6 +879,8 @@ pub fn run_acquisition(
                 Param::Int(observed_at),
                 Param::Int(0),
                 Param::Text("resolved".to_string()),
+                Param::OptText(event_sources.get(key).map(|source| source.0.clone())),
+                Param::OptText(event_sources.get(key).map(|source| source.1.clone())),
             ],
         ));
         parse_batch = parse_batch.push(WriteOp::fact(

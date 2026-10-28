@@ -20,7 +20,7 @@ use super::backup::{self, BackupArtifact};
 
 /// The current schema this application implements. `user_version` mirrors the
 /// applied set; both are checked at startup.
-pub const SUPPORTED_SCHEMA_VERSION: u32 = 3;
+pub const SUPPORTED_SCHEMA_VERSION: u32 = 4;
 
 /// One migration step. `sql` is included from file so the checksum matches
 /// exactly what runs.
@@ -58,6 +58,11 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 3,
         name: "0003_search",
         sql: include_str!("../../migrations/0003_search.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "0004_analysis",
+        sql: include_str!("../../migrations/0004_analysis.sql"),
     },
 ];
 

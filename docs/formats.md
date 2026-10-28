@@ -258,6 +258,27 @@ claim is made that every release of Chromium or Firefox uses one of them.
 Unrecognized contracts are rejected with `unsupported_format` and the missing
 required column names rather than parsed on a best-effort basis.
 
+## Entity fields (P5.1)
+
+Entity resolution reads only these recorded field names; it never parses a
+message body into an identity. Both JSON objects and journal `[name, value]`
+pair arrays are accepted, and only string or integer values are used.
+
+| Entity | Fields (first present wins) |
+|---|---|
+| user | `user`, `username`, `account`, `user.name` |
+| IP | `src_ip`, `remote_ip`, `source_ip`, `ip` |
+| process | `pid`, `_PID`, `process_id` (digits only), plus `_BOOT_ID`/`boot_id`/`boot` |
+| path | `path`, `current_path`, `target_path` |
+| digest | `sha256`, `sha256_hex`, `hash` (exactly 64 hex characters) |
+| host | the event's recorded host claim (`host` JSONL mapping, syslog hostname, journal `_HOSTNAME`) |
+
+Capture events use the captured object instead: the exact native path and a
+complete SHA-256. Values containing control characters, empty values, and
+values over the documented length bounds are not turned into entities. The
+scope and rule tables are in `docs/architecture.md`; an IP or basename match is
+always a candidate, and equal digests always mean equal bytes only.
+
 ## Not supported (deliberate)
 
 - Native `.journal` files (export them first with `journalctl -o export`).

@@ -69,6 +69,11 @@ integrity-sensitive writes, and a measured 5 s `busy_timeout`.
 - `0003_search` (P4.4) is additive: an FTS5 external-content index over event
   summary/kind/host text, an insert trigger, recorded run assumptions, and a
   rebuild for cases created before it.
+- `0004_analysis` (P5.1) is additive: `events.evidence_id` and
+  `events.locator_identity` link an event to its source record (events
+  recorded before the migration keep `NULL` and are reported, never
+  back-filled by guesswork), an entity lookup index, a unique relationship
+  pair index, and relationship lookup indexes.
 
 ## Search index
 
@@ -99,6 +104,22 @@ integrity-sensitive writes, and a measured 5 s `busy_timeout`.
   revisions stay listed (`storage::search::list_revisions`) with the
   assumptions each one recorded (`parse_runs.assumptions_json`), and the
   operator chooses which to read.
+
+## Entities and relationships
+
+- `entities` rows are derived, never authoritative facts about the world.
+  Their ids are deterministic over kind, scope, and raw form, so rebuilding a
+  run inserts the same rows. Scope rules live in `docs/architecture.md`.
+- `event_entities` links an event to each identity it recorded. The lookup
+  index `event_entities_by_entity` serves the entity-neighbourhood direction;
+  the primary key serves event detail.
+- `relationships` holds one row per rule version per canonical endpoint pair
+  (`relationships_pair` unique index). `support_json` names the matching
+  field and the supporting event ids; `strength_basis` states why the edge is
+  observed or only a candidate. Replaying correlation adds nothing.
+- `query_relationships` is the only read path. It is keyset ordered by
+  relationship id, bounded by page size, and filterable by endpoint, kind, and
+  rule. No caller builds relationship SQL from input.
 
 ## Query contract
 

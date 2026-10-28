@@ -234,3 +234,55 @@ adapter query, the schema contract chooses `browser.chromium` or
 as a partial package with `wal_missing` rather than completed silently. Raw
 observations use logical row locators (`table:<table>:rowid:<id>`) and keep all
 original values; only visit rows and Chromium download metadata become events.
+
+## Analysis section (P5.1)
+
+Entity resolution runs over one parse run at a time
+(`CaseSession::build_entities(run_id)`), reading events plus the evidence
+object and the raw observation each event points at. Migration 0004 records
+that link (`events.evidence_id`, `events.locator_identity`); events imported
+before it keep `NULL` and are counted as `events_without_source` instead of
+being given an invented source.
+
+Identity is scoped before it is compared. A scoped identity is an unambiguous
+JSON component list, so a value can never bleed from one field into another:
+
+| Kind | Scope components | What it claims |
+|---|---|---|
+| `host` | `["host","claim",<name>]` | the host the record claims, never verified |
+| `user` | `["host",<host>,"user",<name>]` | the same username on another host is a different entity |
+| `ip` | `["host",<host>,"ip",<addr>]` | the address as claimed by that host |
+| `process` | `["host",<host>,"process",<boot or "no-boot">,<pid>]` | a PID is meaningless without its host and boot |
+| `path` | `["acquisition",<id>,"path",<path>]` | path identity never crosses an acquisition |
+| `digest` | `["sha256",<hex>]` | equal bytes are equal bytes, globally |
+
+Only documented adapter fields become entities: `user`/`username`/`account`/
+`user.name`, `src_ip`/`remote_ip`/`source_ip`/`ip`, `pid`/`_PID`/`process_id`,
+`_BOOT_ID`/`boot_id`/`boot`, `path`/`current_path`/`target_path`, and
+`sha256`/`sha256_hex`/`hash` (exactly 64 hex characters). Journal `[name,
+value]` pair arrays and JSON objects are both read. Free text is never parsed
+into an identity, so a log message cannot invent a user or an address.
+
+Correlation (`CaseSession::correlate`) derives one-hop edges and writes them
+through the writer as insert-or-ignore facts:
+
+| Rule | Version | Kind | Basis |
+|---|---|---|---|
+| `correlate.digest_equal` | 1 | observed | equal complete SHA-256 bytes, not a proven copy, move, or common origin |
+| `correlate.shared_ip` | 1 | candidate | same claimed IP on different scopes (NAT, DHCP, proxying) |
+| `correlate.shared_basename` | 1 | candidate | same final path component on different scopes |
+
+Each edge stores its rule id, rule version, matching field, supporting event
+ids, and the strength rationale. Endpoints are stored in canonical order and a
+unique index keeps one edge per rule version per ordered pair, so replaying
+correlation explains the same edge instead of duplicating it. There is no
+transitive closure: two hops are two claims, not one.
+
+Work is bounded three ways: a bucket larger than `max_bucket_entities`
+(default 32) is skipped and counted, `max_pairs` (default 50 000) caps pair
+comparisons, and `max_edges` (default 5 000) caps derived edges. Candidate
+rules compare only entities whose event times are within `window_seconds`
+(default 3 600); an entity with no resolved time is counted as
+`unsupported_time` and never treated as inside or outside the window.
+`query_relationships` is a keyset read (page size clamped to 1..=1 000)
+filterable by endpoint, kind, and rule.

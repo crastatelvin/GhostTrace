@@ -76,6 +76,17 @@ pub struct NamedEventTimeRef {
     pub value: EventTime,
 }
 
+/// Stable identity of an imported event, derived from the run, the exact
+/// locator inside the source object, and the event kind. One formula, shared by
+/// the import committer and by any later join that recovers an event's source
+/// record (plan P5.1). Capture events use their own ids and never this form.
+pub fn derived_event_id(parse_run_id: &str, locator: &str, kind: &str) -> String {
+    format!(
+        "ev-{}",
+        crate::integrity::hash::identity_hex(&format!("{parse_run_id}|{locator}|{kind}"), 16)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

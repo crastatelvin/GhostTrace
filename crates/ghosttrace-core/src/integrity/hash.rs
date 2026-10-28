@@ -34,6 +34,14 @@ pub fn sha256_hex(digest: &[u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Short lowercase hex digest of an identity string. Used for derived row
+/// identifiers (events, entities) where the input is structured and the output
+/// only needs to be stable and collision-resistant, never a content proof.
+pub fn identity_hex(input: &str, chars: usize) -> String {
+    let digest: [u8; 32] = Sha256::digest(input.as_bytes()).into();
+    sha256_hex(&digest)[..chars.min(64)].to_string()
+}
+
 /// Hash everything `reader` yields. Cancellation is honoured between reads;
 /// the caller receives `Cancelled` and no digest.
 pub fn digest_reader(reader: &mut impl Read, cancelled: &AtomicBool) -> CoreResult<StreamDigest> {

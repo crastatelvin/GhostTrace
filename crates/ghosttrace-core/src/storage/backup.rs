@@ -188,11 +188,12 @@ mod tests {
         let (connection, destination) = case_with_data(dir.path());
         let artifact = backup_and_verify(&connection, &destination, "upgrade").unwrap();
         assert!(artifact.integrity_ok);
-        assert_eq!(artifact.schema_version, 3);
-        assert_eq!(artifact.applied_migrations.len(), 3);
+        assert_eq!(artifact.schema_version, 4);
+        assert_eq!(artifact.applied_migrations.len(), 4);
         assert_eq!(artifact.applied_migrations[0].1, "0001_case");
         assert_eq!(artifact.applied_migrations[1].1, "0002_file_times");
         assert_eq!(artifact.applied_migrations[2].1, "0003_search");
+        assert_eq!(artifact.applied_migrations[3].1, "0004_analysis");
 
         // The backup separately contains the committed row.
         let verification = validate_backup(&artifact.path).unwrap();

@@ -119,3 +119,12 @@ file records implemented capability only.
   pin one revision (`--revision`) so a published report stays reproducible.
   `timeline`/`report` gained revision selection; defaults read the newest
   revision of the latest acquisition (`docs/cli.md`, `docs/storage.md`).
+- P5.1 (2026-10-28): scoped entity resolution and explainable relationships —
+  host/user/IP/process/path/digest entities scoped by host, boot, and
+  acquisition (a PID never joins across hosts or boots); documented adapter
+  fields only, never message text; `correlate.digest_equal` (observed: equal
+  bytes, not a proven copy) and `correlate.shared_ip` /
+  `correlate.shared_basename` (candidates only); bounded buckets, pair budget,
+  edge budget, and temporal windows with skipped/truncated/untimed counts;
+  keyset `query_relationships`; migration 0004 links events to their source
+  record (`docs/architecture.md`, `docs/storage.md`, `docs/formats.md`).

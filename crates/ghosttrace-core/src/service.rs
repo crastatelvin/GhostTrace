@@ -10,6 +10,10 @@ use std::path::PathBuf;
 
 use rusqlite::Connection;
 
+use crate::analysis::correlate::{
+    CorrelateConfig, CorrelateReport, RelationshipPage, RelationshipQuery,
+};
+use crate::analysis::entities::EntityBuildReport;
 use crate::domain::query::{EventPage, EventQuery};
 use crate::error::{CoreError, CoreResult};
 use crate::jobs::RecoverableJob;
@@ -201,6 +205,24 @@ impl CaseSession {
     pub fn query_events(&self, query: &EventQuery) -> CoreResult<EventPage> {
         let reader = self.reader()?;
         reader.query_events(&self.display_timezone, query)
+    }
+
+    /// Resolve scoped entities for one parse run (plan P5.1). Idempotent.
+    pub fn build_entities(&self, revision: &str) -> CoreResult<EntityBuildReport> {
+        let reader = self.reader()?;
+        crate::analysis::entities::build_entities(&self.writer, &reader, revision)
+    }
+
+    /// Derive bounded, explainable relationships over the recorded entities.
+    pub fn correlate(&self, config: &CorrelateConfig) -> CoreResult<CorrelateReport> {
+        let reader = self.reader()?;
+        crate::analysis::correlate::correlate(&self.writer, &reader, config)
+    }
+
+    /// Read relationships with a bounded page size and keyset cursor.
+    pub fn query_relationships(&self, query: &RelationshipQuery) -> CoreResult<RelationshipPage> {
+        let reader = self.reader()?;
+        crate::analysis::correlate::query_relationships(&reader, query)
     }
 }
 

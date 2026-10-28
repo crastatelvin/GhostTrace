@@ -3,4 +3,6 @@
 //! Analysis reads the case through the shared reader; it never mutates source
 //! evidence and never claims more than the recorded observations support.
 
+pub mod correlate;
 pub mod diff;
+pub mod entities;

@@ -879,15 +879,15 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 #### P5.1 — Scoped entity resolution and bounded relationships
 
-**Files:** `analysis/{entities,correlate}.rs`, migration `0003_analysis.sql`; tests `entity_scope.rs`, `relationships.rs`; architecture/format docs.
+**Files:** `analysis/{entities,correlate}.rs`, migration `0004_analysis.sql` (0003 is the P4.4 search step); tests `entity_scope.rs`, `relationships.rs`; architecture/format docs.
 
 **Consumes:** Adapter-specific event fields/observations. **Produces:** Scoped entities, explicit/candidate edges, bounded `query_relationships`.
 
-- [ ] Test same PID on different hosts/boots or reused process identity does not create an asserted join; matching basenames/IPs alone stay weak candidates.
-- [ ] Test equal hashes yield duplicate-content edges without merging acquisitions or proving a copy action.
-- [ ] Implement indexed entity buckets and bounded temporal windows with support IDs and rule versions.
-- [ ] Test worst-case common usernames/paths cannot create all-event-pairs work or exceed graph limits.
-- [ ] Commit: `feat: correlate scoped evidence with explainable relationships`.
+- [x] Test same PID on different hosts/boots or reused process identity does not create an asserted join; matching basenames/IPs alone stay weak candidates.
+- [x] Test equal hashes yield duplicate-content edges without merging acquisitions or proving a copy action.
+- [x] Implement indexed entity buckets and bounded temporal windows with support IDs and rule versions.
+- [x] Test worst-case common usernames/paths cannot create all-event-pairs work or exceed graph limits.
+- [x] Commit: `feat: correlate scoped evidence with explainable relationships`.
 
 #### P5.2 — Built-in rules, disposition, tags, and saved views
 
@@ -1114,7 +1114,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P4 | P4.2 | Binary-safe journal export | [x] |
 | P4 | P4.3 | Browser history/WAL/schema support | [x] |
 | P4 | P4.4 | FTS and time revisions | [x] |
-| P5 | P5.1 | Scoped entities/relationships | [ ] |
+| P5 | P5.1 | Scoped entities/relationships | [x] |
 | P5 | P5.2 | Explainable rules/notes/views | [ ] |
 | P6 | P6.1 | Desktop case/import | [ ] |
 | P6 | P6.2 | Desktop timeline/provenance | [ ] |

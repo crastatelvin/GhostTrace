@@ -870,11 +870,10 @@ impl Committer<'_> {
         if let Some(draft) = parsed.event {
             self.counts.events += 1;
             self.pending_events.push(Event {
-                id: format!(
-                    "ev-{}",
-                    &sha256_hex(&sha256_bytes(
-                        format!("{}|{}|{}", self.run_id, parsed.locator, draft.kind).as_bytes()
-                    ))[..16]
+                id: crate::domain::event::derived_event_id(
+                    self.run_id,
+                    &parsed.locator,
+                    &draft.kind,
                 ),
                 kind: draft.kind,
                 summary: draft.summary,
