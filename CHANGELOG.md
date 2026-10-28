@@ -164,3 +164,15 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P6.3 (2026-10-28): snapshot comparison and explainable analysis in the
+  desktop — coverage-aware diff of two recorded captures with scope verdict,
+  warnings, per-class counts, keyset paging, and `unknown` kept as its own
+  visible class; relationship list with a bounded graph (40 nodes / 80 edges)
+  whose edges reveal supporting events and open them in the timeline inspector;
+  findings with severity bands, rationale, alternatives, recorded predicates,
+  and append-only disposition history; event notes, tags, and bookmarks as
+  annotations; and typed saved views that restore the timeline filters. All
+  reads run on the query thread, all writes (analysis, correlation,
+  annotations, views) on the single job worker, and every command carries a
+  generation or job id so stale results change nothing. New core entry point:
+  `CaseSession::compare_acquisitions()` (`docs/gui-guide.md`).

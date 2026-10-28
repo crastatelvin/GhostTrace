@@ -941,10 +941,15 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** P3/P5 analysis/annotations. **Produces:** Complete analyst investigation screens.
 
-- [ ] Test scope mismatch/unknown diff results remain visible; graph edge selection reveals supporting observations.
-- [ ] Implement bounded graph with accessible equivalent list, findings explanation/disposition, notes/tags/bookmarks/saved views.
-- [ ] Test large neighborhoods cap work and expansion; every interaction is keyboard reachable.
-- [ ] Commit: `feat: expose snapshot comparison and explainable analysis in desktop`.
+- [x] Test scope mismatch/unknown diff results remain visible; graph edge selection reveals supporting observations.
+- [x] Implement bounded graph with accessible equivalent list, findings explanation/disposition, notes/tags/bookmarks/saved views.
+- [x] Test large neighborhoods cap work and expansion; every interaction is keyboard reachable.
+  The graph is capped at 40 nodes and 80 edges over the loaded page; omitted
+  elements are stated in text and every loaded row stays in the keyboard-driven
+  list. `desktop_analysis.rs` and `desktop_graph_limits.rs` cover the contract,
+  and `desktop_jobs.rs` runs analysis, correlation, annotation, and view saving
+  through the real worker.
+- [x] Commit: `feat: expose snapshot comparison and explainable analysis in desktop`.
 
 #### P6.4 — Report workflow, themes, and GUI completion gate
 
@@ -1124,7 +1129,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P5 | P5.2 | Explainable rules/notes/views | [x] |
 | P6 | P6.1 | Desktop case/import | [x] |
 | P6 | P6.2 | Desktop timeline/provenance | [x] |
-| P6 | P6.3 | Desktop analysis/notes | [ ] |
+| P6 | P6.3 | Desktop analysis/notes | [x] |
 | P6 | P6.4 | Desktop reports/accessibility | [ ] |
 | P7 | P7 | TUI and terminal safety | [ ] |
 | P8 | P8.1 | EVTX adapters | [ ] |

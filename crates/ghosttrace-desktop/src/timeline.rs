@@ -9,6 +9,7 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use eframe::egui;
+use ghosttrace_core::analysis::views::SavedFilter;
 use ghosttrace_core::domain::query::EventRow;
 use ghosttrace_core::text::escape_for_display;
 
@@ -44,6 +45,7 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     ));
 
     filters(state, ui);
+    views(state, ui);
     histogram(state, ui);
     ui.separator();
     event_list(state, ui);
@@ -82,6 +84,57 @@ fn filters(state: &mut AppState, ui: &mut egui::Ui) {
     }
 }
 
+/// Saved views are typed filters over the same query contract. Applying one
+/// only changes the visible filters; it never runs stored SQL.
+fn views(state: &mut AppState, ui: &mut egui::Ui) {
+    egui::CollapsingHeader::new(format!("Saved views · {}", state.timeline.view_status))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                labeled_text(ui, "Saved view name", &mut state.timeline.view_name);
+                if ui.button("Save current filters").clicked() {
+                    state.save_current_view();
+                }
+                if ui.button("Reload saved views").clicked() {
+                    state.reload_views();
+                }
+            });
+            for view in state.timeline.views.clone() {
+                let label = format!("Apply {} · {}", view.name, describe_filter(&view.filter));
+                if ui.button(label).clicked() {
+                    state.apply_view(&view.name);
+                }
+            }
+        });
+}
+
+fn describe_filter(filter: &SavedFilter) -> String {
+    let mut parts = Vec::new();
+    if let Some(kind) = &filter.kind {
+        parts.push(format!("kind {kind}"));
+    }
+    if let Some(host) = &filter.host {
+        parts.push(format!("host {host}"));
+    }
+    if let Some(source) = &filter.source {
+        parts.push(format!("source {source}"));
+    }
+    if let Some(text) = &filter.text {
+        parts.push(format!("text {text:?}"));
+    }
+    if let (Some(after), Some(before)) = (filter.after_seconds, filter.before_seconds) {
+        parts.push(format!("window {after}..{before} (Unix seconds)"));
+    }
+    if filter.unresolved_only {
+        parts.push("unresolved only".into());
+    }
+    if parts.is_empty() {
+        "all events".into()
+    } else {
+        parts.join(", ")
+    }
+}
+
 fn histogram(state: &mut AppState, ui: &mut egui::Ui) {
     let Some(histogram) = state.timeline.histogram.clone() else {
         return;
@@ -108,7 +161,10 @@ fn histogram(state: &mut AppState, ui: &mut egui::Ui) {
             ui.label("No binned events in this view.");
             return;
         }
-        if state.timeline.filters.window.is_some() && ui.button("Clear time window").clicked() {
+        if (state.timeline.filters.after_seconds.is_some()
+            || state.timeline.filters.before_seconds.is_some())
+            && ui.button("Clear time window").clicked()
+        {
             clear = true;
         }
         egui::ScrollArea::vertical()
@@ -116,8 +172,8 @@ fn histogram(state: &mut AppState, ui: &mut egui::Ui) {
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 for bin in &histogram.bins {
-                    let selected =
-                        state.timeline.filters.window == Some((bin.start_seconds, bin.end_seconds));
+                    let selected = state.timeline.filters.after_seconds == Some(bin.start_seconds)
+                        && state.timeline.filters.before_seconds == Some(bin.end_seconds);
                     let label = format!(
                         "{} to {} · {} event(s)",
                         format_instant(bin.start_seconds, &zone),
@@ -131,7 +187,8 @@ fn histogram(state: &mut AppState, ui: &mut egui::Ui) {
             });
     });
     if clear {
-        state.timeline.filters.window = None;
+        state.timeline.filters.after_seconds = None;
+        state.timeline.filters.before_seconds = None;
         state.refresh_timeline();
     }
     if let Some((start, end)) = select {

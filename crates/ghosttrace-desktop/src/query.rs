@@ -1,15 +1,24 @@
-//! Read-only query worker for the desktop (plan P6.2).
+//! Read-only query worker for the desktop (plan P6.2, P6.3).
 //!
-//! Timeline pages, histogram aggregates, and event details are read on their
-//! own thread with their own [`CaseReader`], so a running capture or import
-//! never delays a query and a query never touches SQLite in a render callback.
-//! Every request carries the generation that asked for it; the UI drops results
-//! whose generation no longer matches.
+//! Timeline pages, histogram aggregates, event details, snapshot diffs,
+//! relationships, findings, annotations, and saved views are read on their own
+//! thread with their own [`CaseReader`], so a running capture or import never
+//! delays a query and a query never touches SQLite in a render callback. Every
+//! request carries the generation that asked for it; the UI drops results whose
+//! generation no longer matches.
 
 use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use ghosttrace_core::analysis::annotations::{AnnotationRevision, history};
+use ghosttrace_core::analysis::correlate::{
+    RelationshipPage, RelationshipQuery, query_relationships,
+};
+use ghosttrace_core::analysis::diff::{DiffQuery, DiffReport, compare_acquisitions};
+use ghosttrace_core::analysis::rules::findings_for_run;
+use ghosttrace_core::analysis::views::{SavedView, list as list_views};
 use ghosttrace_core::domain::detail::{EventDetail, Histogram};
+use ghosttrace_core::domain::finding::Finding;
 use ghosttrace_core::domain::query::{EventPage, EventQuery};
 use ghosttrace_core::error::CoreError;
 use ghosttrace_core::storage::read::CaseReader;
@@ -20,6 +29,26 @@ pub enum QueryTarget {
     Events,
     Histogram,
     Detail,
+    Diff,
+    Relationships,
+    Findings,
+    Annotations,
+    Views,
+}
+
+impl QueryTarget {
+    pub fn label(self) -> &'static str {
+        match self {
+            QueryTarget::Events => "timeline page",
+            QueryTarget::Histogram => "histogram",
+            QueryTarget::Detail => "event detail",
+            QueryTarget::Diff => "snapshot comparison",
+            QueryTarget::Relationships => "relationship list",
+            QueryTarget::Findings => "findings",
+            QueryTarget::Annotations => "annotation history",
+            QueryTarget::Views => "saved views",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +76,28 @@ pub enum QueryRequest {
         revision: String,
         event_id: String,
     },
+    Diff {
+        generation: u64,
+        before: String,
+        after: String,
+        query: DiffQuery,
+    },
+    Relationships {
+        generation: u64,
+        query: RelationshipQuery,
+    },
+    Findings {
+        generation: u64,
+        analysis_run_id: String,
+    },
+    Annotations {
+        generation: u64,
+        target_id: String,
+        limit: u32,
+    },
+    Views {
+        generation: u64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +113,28 @@ pub enum QueryResult {
     Detail {
         generation: u64,
         detail: Box<EventDetail>,
+    },
+    Diff {
+        generation: u64,
+        report: Box<DiffReport>,
+    },
+    Relationships {
+        generation: u64,
+        page: Box<RelationshipPage>,
+    },
+    Findings {
+        generation: u64,
+        run_id: String,
+        findings: Vec<Finding>,
+    },
+    Annotations {
+        generation: u64,
+        target_id: String,
+        revisions: Vec<AnnotationRevision>,
+    },
+    Views {
+        generation: u64,
+        views: Vec<SavedView>,
     },
     /// A rejected request or read failure. Generation `0` means the failure is
     /// not tied to one query (for example the case database could not open).
@@ -110,6 +183,21 @@ struct OpenCase {
 fn worker(requests: Receiver<QueryRequest>, results: Sender<QueryResult>) {
     let mut open: Option<OpenCase> = None;
     while let Ok(request) = requests.recv() {
+        // Every read needs the open case; a missing case is reported, never
+        // turned into an empty successful result.
+        macro_rules! case {
+            ($target:expr) => {
+                match &open {
+                    Some(case) => case,
+                    None => {
+                        if results.send(failure(0, $target, &no_case())).is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                }
+            };
+        }
         let result = match request {
             QueryRequest::SetCase {
                 database_path,
@@ -129,15 +217,7 @@ fn worker(requests: Receiver<QueryRequest>, results: Sender<QueryResult>) {
                 query,
                 text,
             } => {
-                let Some(case) = &open else {
-                    if results
-                        .send(failure(0, QueryTarget::Events, &no_case()))
-                        .is_err()
-                    {
-                        return;
-                    }
-                    continue;
-                };
+                let case = case!(QueryTarget::Events);
                 match read_events(case, &query, text.as_deref()) {
                     Ok(page) => QueryResult::Events {
                         generation,
@@ -152,31 +232,14 @@ fn worker(requests: Receiver<QueryRequest>, results: Sender<QueryResult>) {
                 text,
                 bins,
             } => {
-                let Some(case) = &open else {
-                    if results
-                        .send(failure(0, QueryTarget::Histogram, &no_case()))
-                        .is_err()
-                    {
-                        return;
-                    }
-                    continue;
-                };
-                let text = match optional_search(text.as_deref()) {
-                    Ok(text) => text,
-                    Err(error) => {
-                        if results
-                            .send(failure(generation, QueryTarget::Histogram, &error))
-                            .is_err()
-                        {
-                            return;
-                        }
-                        continue;
-                    }
-                };
-                match case.reader.event_histogram(&query, text.as_ref(), bins) {
-                    Ok(histogram) => QueryResult::Histogram {
-                        generation,
-                        histogram: Box::new(histogram),
+                let case = case!(QueryTarget::Histogram);
+                match optional_search(text.as_deref()) {
+                    Ok(text) => match case.reader.event_histogram(&query, text.as_ref(), bins) {
+                        Ok(histogram) => QueryResult::Histogram {
+                            generation,
+                            histogram: Box::new(histogram),
+                        },
+                        Err(error) => failure(generation, QueryTarget::Histogram, &error),
                     },
                     Err(error) => failure(generation, QueryTarget::Histogram, &error),
                 }
@@ -186,21 +249,74 @@ fn worker(requests: Receiver<QueryRequest>, results: Sender<QueryResult>) {
                 revision,
                 event_id,
             } => {
-                let Some(case) = &open else {
-                    if results
-                        .send(failure(0, QueryTarget::Detail, &no_case()))
-                        .is_err()
-                    {
-                        return;
-                    }
-                    continue;
-                };
+                let case = case!(QueryTarget::Detail);
                 match case.reader.event_detail(&revision, &event_id) {
                     Ok(detail) => QueryResult::Detail {
                         generation,
                         detail: Box::new(detail),
                     },
                     Err(error) => failure(generation, QueryTarget::Detail, &error),
+                }
+            }
+            QueryRequest::Diff {
+                generation,
+                before,
+                after,
+                query,
+            } => {
+                let case = case!(QueryTarget::Diff);
+                match compare_acquisitions(&case.reader, &before, &after, &query) {
+                    Ok(report) => QueryResult::Diff {
+                        generation,
+                        report: Box::new(report),
+                    },
+                    Err(error) => failure(generation, QueryTarget::Diff, &error),
+                }
+            }
+            QueryRequest::Relationships { generation, query } => {
+                let case = case!(QueryTarget::Relationships);
+                match query_relationships(&case.reader, &query) {
+                    Ok(page) => QueryResult::Relationships {
+                        generation,
+                        page: Box::new(page),
+                    },
+                    Err(error) => failure(generation, QueryTarget::Relationships, &error),
+                }
+            }
+            QueryRequest::Findings {
+                generation,
+                analysis_run_id,
+            } => {
+                let case = case!(QueryTarget::Findings);
+                match findings_for_run(&case.reader, &analysis_run_id) {
+                    Ok(findings) => QueryResult::Findings {
+                        generation,
+                        run_id: analysis_run_id,
+                        findings,
+                    },
+                    Err(error) => failure(generation, QueryTarget::Findings, &error),
+                }
+            }
+            QueryRequest::Annotations {
+                generation,
+                target_id,
+                limit,
+            } => {
+                let case = case!(QueryTarget::Annotations);
+                match history(&case.reader, &target_id, limit) {
+                    Ok(revisions) => QueryResult::Annotations {
+                        generation,
+                        target_id,
+                        revisions,
+                    },
+                    Err(error) => failure(generation, QueryTarget::Annotations, &error),
+                }
+            }
+            QueryRequest::Views { generation } => {
+                let case = case!(QueryTarget::Views);
+                match list_views(&case.reader) {
+                    Ok(views) => QueryResult::Views { generation, views },
+                    Err(error) => failure(generation, QueryTarget::Views, &error),
                 }
             }
         };

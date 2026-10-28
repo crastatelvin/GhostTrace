@@ -69,6 +69,9 @@ impl eframe::App for DesktopApp {
         if self.state.job.state == JobState::Running
             || self.state.timeline.is_loading()
             || self.state.timeline.is_debouncing()
+            || self.state.diff.is_loading()
+            || self.state.relations.is_loading()
+            || self.state.findings.is_loading()
         {
             ctx.request_repaint_after(REPAINT_WHILE_RUNNING);
         }

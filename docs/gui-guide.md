@@ -1,9 +1,10 @@
-# Desktop guide (P6.2)
+# Desktop guide (P6.3)
 
 The desktop application is a native egui/eframe shell over the same
 `ghosttrace-core` service the CLI uses. P6.1 covers the case and evidence
-workflow; P6.2 adds the timeline, histogram, and provenance inspector.
-Diff, relationships, findings, and reports arrive in P6.3–P6.4.
+workflow; P6.2 adds the timeline, histogram, and provenance inspector; P6.3
+adds snapshot comparison, relationships, findings, notes, and saved views.
+Reports and the completion gate arrive in P6.4.
 
 ```bash
 cargo run -p ghosttrace-desktop
@@ -77,6 +78,47 @@ the job line.
 - Copy actions exist for the event id, locator, and raw record. The raw preview
   is inert, escaped (control and bidi characters become visible escapes), and
   bounded; a truncated preview says so.
+- Notes and tags are appended to the event id as a new revision that names the
+  one it supersedes. A bookmark is a recorded `bookmark` tag, not a new fact.
+  A concurrent edit is reported as a conflict, never overwritten.
+
+**Compare captures screen**
+
+- Choose the earlier and later recorded capture explicitly. The result states
+  whether the scopes are compatible, both root sets, and every warning.
+- Every row carries a class and a stable reason. `unknown` is its own class:
+  a scope mismatch, coverage gap, or missing digest is never folded into
+  "appeared" or "deleted". Move candidates are labelled as equal bytes only.
+- Row detail shows the recorded size, digest, and mtime for each side. The list
+  pages in keyset order; loading another page keeps the first page's scope
+  verdict.
+
+**Relationships screen**
+
+- Candidate links derived from recorded entities, with the rule id/version,
+  strength basis, matching fields, and supporting event ids. Opening a
+  supporting event switches to the timeline inspector for its raw record.
+- The list is the primary representation and is keyboard reachable (`J`/`K`).
+  The graph draws at most 40 nodes and 80 edges over the same loaded rows; when
+  it omits something it says so in text, and every loaded row stays in the list.
+- "Derive relationships" runs on the single job worker because it records new
+  facts; the read list runs on the query thread.
+
+**Findings screen**
+
+- Run the five compiled rules against the active revision. Each finding shows
+  its severity band (never a score or percentage), rationale, named
+  alternatives, recorded predicates, and supporting events.
+- A disposition change appends a revision naming the one the analyst saw; the
+  history shows author, time, text, tags, and disposition. A stale revision is
+  a visible conflict.
+
+**Saved views**
+
+- The timeline can store the current typed filter (search text, exact
+  kind/host/source, window, unresolved view) under a name. Applying a view
+  restores those fields and re-runs the shared query path; stored views never
+  contain SQL or an expression.
 
 ## Architecture
 
@@ -86,13 +128,16 @@ the job line.
   thread. Cancellation handles are shared atomics, so a cancel requested before
   the worker registers its handle is remembered rather than lost.
 - `query.rs` — a second worker thread with its own read-only `CaseReader` for
-  timeline pages, histogram aggregates, and event details. Queries never wait
-  behind a running capture/import, and results carry their generation.
-- `state.rs` — timeline state: debounce deadline, bounded page cache, histogram,
-  selection, and generation counters. `apply_query()` ignores superseded
-  results and keeps failures actionable.
-- `cases.rs`, `import.rs`, `timeline.rs`, `evidence.rs` — screens. They only
-  mutate state and queue requests.
+  timeline pages, histogram aggregates, event details, diffs, relationships,
+  findings, annotation history, and saved views. Queries never wait behind a
+  running capture/import, and results carry their generation.
+- `state.rs` — timeline, diff, relationship, and finding state: debounce
+  deadline, bounded page caches, graph caps, selection, and per-area generation
+  counters. `apply_query()` ignores superseded results and keeps failures
+  actionable.
+- `cases.rs`, `import.rs`, `timeline.rs`, `evidence.rs`, `diff.rs`,
+  `relations.rs`, `findings.rs` — screens. They only mutate state and queue
+  requests.
 - `app.rs` — `eframe::App`: `logic` drains job and query results, applies
   cancels, sends commands and queries; `ui` only draws. No SQLite or evidence
   access happens in a render callback.
@@ -111,7 +156,11 @@ case: create → capture → import, pre-registered cancellation, and failure
 codes. `tests/desktop_timeline.rs` covers debounce, supersession, the bounded
 cache, bin selection, and detail replacement. `tests/desktop_accessibility.rs`
 checks named controls, keyboard selection, the `/` shortcut, 1.5× scaling, and
-that uncertainty appears in words. Because a running job animates its progress
+that uncertainty appears in words. `tests/desktop_analysis.rs` covers diff
+scope/unknown visibility and paging, findings dispositions, event notes and
+bookmarks, saved views, and the analysis/correlation commands.
+`tests/desktop_graph_limits.rs` covers the graph node/edge caps, keyset
+expansion, keyboard selection, and the accessible edge names. Because a running job animates its progress
 bar, those tests step a fixed number of frames instead of waiting for the UI to
 settle.
 
@@ -151,6 +200,10 @@ silently.
   about half a second per million events; it is not sampled or approximated.
 - Search uses the validated FTS grammar: hyphenated terms must be quoted
   (`"needle-rare"`), otherwise `-` means exclusion.
+- Snapshot comparison re-reads both recorded snapshots for each page, so paging
+  a very large comparison repeats that work; it is a manual, explicit action.
+- Relationships are derived over every recorded entity, not per revision; the
+  revision is stated where it applies, and a link's support names its events.
 - Screen-reader verification on the release targets is a P10 gate. The earlier
   Orca smoke test failed on rootless Xwayland with an XKB error; that is an
   environment limitation, not an accessibility certification

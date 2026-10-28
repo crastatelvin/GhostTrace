@@ -4,7 +4,10 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use ghosttrace_core::analysis::annotations::AppendAnnotation;
+use ghosttrace_core::analysis::views::SavedFilter;
 use ghosttrace_core::domain::case::AcquisitionMethod;
+use ghosttrace_core::domain::finding::Disposition;
 use ghosttrace_desktop::commands::{Command, CommandBus, CommandEvent, Outcome};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -108,7 +111,7 @@ fn worker_creates_captures_and_imports_a_case() {
 
     bus.send(Command::Import {
         id: 3,
-        case_directory: case,
+        case_directory: case.clone(),
         object_path: "app.jsonl".into(),
         format: None,
         syslog_timezone: None,
@@ -130,6 +133,91 @@ fn worker_creates_captures_and_imports_a_case() {
             assert!(run_id.starts_with("pr-"));
             assert_eq!(state, "completed");
             assert_eq!(events, 1);
+
+            // P6.3 writes go through the same single worker: analysis,
+            // relationships, an append-only annotation, and a saved view.
+            bus.send(Command::Analyze {
+                id: 4,
+                case_directory: case.clone(),
+                revision: run_id.clone(),
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 4, .. })
+            });
+            let analysis_run = match event {
+                CommandEvent::Finished {
+                    outcome:
+                        Outcome::Analyzed {
+                            run_id,
+                            state,
+                            findings: _,
+                        },
+                    ..
+                } => {
+                    assert_eq!(state, "completed");
+                    assert!(run_id.starts_with("arun-"));
+                    run_id
+                }
+                other => panic!("unexpected event: {other:?}"),
+            };
+
+            bus.send(Command::Correlate {
+                id: 5,
+                case_directory: case.clone(),
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 5, .. })
+            });
+            match event {
+                CommandEvent::Finished {
+                    outcome: Outcome::Correlated { inserted, .. },
+                    ..
+                } => assert!(inserted <= 64, "a tiny case derives few edges"),
+                other => panic!("unexpected event: {other:?}"),
+            }
+
+            bus.send(Command::Annotate {
+                id: 6,
+                case_directory: case.clone(),
+                request: AppendAnnotation {
+                    target_id: analysis_run,
+                    author_label: "ana".into(),
+                    text: "checked the run".into(),
+                    tags: vec!["triage".into()],
+                    disposition: Some(Disposition::Confirmed),
+                    expected_previous: None,
+                },
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 6, .. })
+            });
+            match event {
+                CommandEvent::Finished {
+                    outcome: Outcome::Annotated { revision_id, .. },
+                    ..
+                } => assert!(revision_id > 0),
+                other => panic!("unexpected event: {other:?}"),
+            }
+
+            bus.send(Command::SaveView {
+                id: 7,
+                case_directory: case,
+                name: "hello events".into(),
+                filter: SavedFilter {
+                    text: Some("hello".into()),
+                    ..SavedFilter::default()
+                },
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 7, .. })
+            });
+            match event {
+                CommandEvent::Finished {
+                    outcome: Outcome::ViewSaved { name },
+                    ..
+                } => assert_eq!(name, "hello events"),
+                other => panic!("unexpected event: {other:?}"),
+            }
         }
         other => panic!("unexpected event: {other:?}"),
     }

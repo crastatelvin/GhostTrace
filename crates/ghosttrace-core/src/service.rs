@@ -14,6 +14,7 @@ use crate::analysis::annotations::{AnnotationRevision, AppendAnnotation};
 use crate::analysis::correlate::{
     CorrelateConfig, CorrelateReport, RelationshipPage, RelationshipQuery,
 };
+use crate::analysis::diff::{DiffQuery, DiffReport};
 use crate::analysis::entities::EntityBuildReport;
 use crate::analysis::rules::{AnalysisReport, AnalysisRequest};
 use crate::analysis::views::{SavedFilter, SavedView};
@@ -238,6 +239,18 @@ impl CaseSession {
             None => None,
         };
         reader.event_histogram(query, text.as_ref(), bins)
+    }
+
+    /// Coverage-aware comparison of two recorded acquisitions (P3.1/P6.3).
+    /// Both must belong to this case; scope mismatches stay `unknown` rows.
+    pub fn compare_acquisitions(
+        &self,
+        before: &str,
+        after: &str,
+        query: &DiffQuery,
+    ) -> CoreResult<DiffReport> {
+        let reader = self.reader()?;
+        crate::analysis::diff::compare_acquisitions(&reader, before, after, query)
     }
 
     /// Resolve scoped entities for one parse run (plan P5.1). Idempotent.

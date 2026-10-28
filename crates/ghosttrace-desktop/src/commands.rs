@@ -17,6 +17,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use ghosttrace_core::analysis::annotations::AppendAnnotation;
+use ghosttrace_core::analysis::rules::{AnalysisRequest, RuleConfig};
+use ghosttrace_core::analysis::views::SavedFilter;
 use ghosttrace_core::capture::copy::{AcquisitionOptions, CopyProgress, run_acquisition};
 use ghosttrace_core::capture::{CaptureRoot, CaptureSpec};
 use ghosttrace_core::domain::case::AcquisitionMethod;
@@ -37,6 +40,10 @@ pub enum JobPhase {
     Open,
     Capture,
     Import,
+    Analyze,
+    Correlate,
+    Annotate,
+    SaveView,
 }
 
 impl JobPhase {
@@ -46,6 +53,10 @@ impl JobPhase {
             JobPhase::Open => "open case",
             JobPhase::Capture => "capture",
             JobPhase::Import => "import",
+            JobPhase::Analyze => "analyze",
+            JobPhase::Correlate => "derive relationships",
+            JobPhase::Annotate => "record note",
+            JobPhase::SaveView => "save view",
         }
     }
 }
@@ -82,6 +93,30 @@ pub enum Command {
         syslog_timezone: Option<String>,
         syslog_year: Option<i32>,
     },
+    /// Evaluate the compiled rules against one revision (P5.2).
+    Analyze {
+        id: JobId,
+        case_directory: String,
+        revision: String,
+    },
+    /// Derive relationships from recorded entities (P5.1).
+    Correlate {
+        id: JobId,
+        case_directory: String,
+    },
+    /// Append a note, tag set, or disposition (P5.2). Append-only.
+    Annotate {
+        id: JobId,
+        case_directory: String,
+        request: AppendAnnotation,
+    },
+    /// Record a named, typed filter over the shared query contract.
+    SaveView {
+        id: JobId,
+        case_directory: String,
+        name: String,
+        filter: SavedFilter,
+    },
 }
 
 impl Command {
@@ -90,7 +125,11 @@ impl Command {
             Command::CreateCase { id, .. }
             | Command::OpenCase { id, .. }
             | Command::Capture { id, .. }
-            | Command::Import { id, .. } => *id,
+            | Command::Import { id, .. }
+            | Command::Analyze { id, .. }
+            | Command::Correlate { id, .. }
+            | Command::Annotate { id, .. }
+            | Command::SaveView { id, .. } => *id,
         }
     }
 
@@ -100,6 +139,10 @@ impl Command {
             Command::OpenCase { .. } => JobPhase::Open,
             Command::Capture { .. } => JobPhase::Capture,
             Command::Import { .. } => JobPhase::Import,
+            Command::Analyze { .. } => JobPhase::Analyze,
+            Command::Correlate { .. } => JobPhase::Correlate,
+            Command::Annotate { .. } => JobPhase::Annotate,
+            Command::SaveView { .. } => JobPhase::SaveView,
         }
     }
 }
@@ -136,6 +179,23 @@ pub enum Outcome {
         run_id: String,
         state: String,
         events: u64,
+    },
+    Analyzed {
+        run_id: String,
+        state: String,
+        findings: usize,
+    },
+    Correlated {
+        derived: u64,
+        inserted: u64,
+        truncated: bool,
+    },
+    Annotated {
+        target_id: String,
+        revision_id: i64,
+    },
+    ViewSaved {
+        name: String,
     },
 }
 
@@ -319,6 +379,23 @@ fn worker(commands: Receiver<Command>, events: Sender<CommandEvent>, registry: A
                 syslog_timezone,
                 syslog_year,
             ),
+            Command::Analyze {
+                case_directory,
+                revision,
+                ..
+            } => analyze(&case_directory, revision),
+            Command::Correlate { case_directory, .. } => correlate(&case_directory),
+            Command::Annotate {
+                case_directory,
+                request,
+                ..
+            } => annotate(&case_directory, request),
+            Command::SaveView {
+                case_directory,
+                name,
+                filter,
+                ..
+            } => save_view(&case_directory, &name, &filter),
         };
         registry.finish(id);
         let event = match result {
@@ -504,6 +581,47 @@ fn import(
         run_id: outcome.run_id,
         state: outcome.state,
         events: outcome.events,
+    })
+}
+
+fn analyze(case_directory: &str, revision: String) -> CoreResult<Outcome> {
+    let (session, _report) = CaseSession::open(PathBuf::from(case_directory))?;
+    let report = session.analyze(&AnalysisRequest {
+        revision,
+        config: RuleConfig::default(),
+    })?;
+    Ok(Outcome::Analyzed {
+        run_id: report.run_id,
+        state: report.state,
+        findings: report.findings.len(),
+    })
+}
+
+fn correlate(case_directory: &str) -> CoreResult<Outcome> {
+    let (session, _report) = CaseSession::open(PathBuf::from(case_directory))?;
+    let report =
+        session.correlate(&ghosttrace_core::analysis::correlate::CorrelateConfig::default())?;
+    Ok(Outcome::Correlated {
+        derived: report.derived,
+        inserted: report.inserted,
+        truncated: report.truncated,
+    })
+}
+
+fn annotate(case_directory: &str, request: AppendAnnotation) -> CoreResult<Outcome> {
+    let (session, _report) = CaseSession::open(PathBuf::from(case_directory))?;
+    let revision = session.append_annotation(&request)?;
+    Ok(Outcome::Annotated {
+        target_id: revision.target_id,
+        revision_id: revision.id,
+    })
+}
+
+fn save_view(case_directory: &str, name: &str, filter: &SavedFilter) -> CoreResult<Outcome> {
+    let (session, _report) = CaseSession::open(PathBuf::from(case_directory))?;
+    session.save_view(name, filter)?;
+    Ok(Outcome::ViewSaved {
+        name: name.to_string(),
     })
 }
 

@@ -9,7 +9,7 @@ use eframe::egui;
 use ghosttrace_core::domain::detail::{EntityRef, EventDetail, EventTimeDetail};
 use ghosttrace_core::text::{MAX_PREVIEW_BYTES, escape_for_display};
 
-use crate::state::AppState;
+use crate::state::{AppState, labeled_text};
 
 pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     ui.heading("Evidence inspector");
@@ -19,7 +19,51 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show(ui, |ui| body(ui, &detail));
+        .show(ui, |ui| {
+            body(ui, &detail);
+            notes(ui, state);
+        });
+}
+
+/// Analyst notes and tags are annotations on the event id, never edits to the
+/// recorded observation. Each append names the revision it supersedes.
+fn notes(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.separator();
+    ui.heading("Notes and tags");
+    ui.label(
+        "Notes are append-only: each edit records a new revision that names the one it          supersedes. A bookmark is a recorded tag, not a new fact about the event.",
+    );
+    labeled_text(ui, "Author label", &mut state.timeline.author);
+    let label = ui.label("Event note");
+    ui.add(
+        egui::TextEdit::multiline(&mut state.timeline.note)
+            .desired_rows(3)
+            .desired_width(f32::INFINITY),
+    )
+    .labelled_by(label.id);
+    labeled_text(ui, "Event tags", &mut state.timeline.tags);
+    ui.checkbox(&mut state.timeline.bookmark, "Bookmark this event");
+    if ui.button("Record note").clicked() {
+        state.record_event_annotation();
+    }
+    ui.label(&state.timeline.annotation_status);
+    for revision in state.timeline.annotations.clone() {
+        let (text, _) = escape_for_display(&revision.text, 2_048);
+        ui.label(format!(
+            "{} · {} · {} · tags: {}",
+            crate::timeline::format_instant(
+                revision.created_seconds,
+                &state.timeline.display_timezone
+            ),
+            revision.author_label,
+            if text.is_empty() { "no text" } else { &text },
+            if revision.tags.is_empty() {
+                "none".into()
+            } else {
+                revision.tags.join(", ")
+            }
+        ));
+    }
 }
 
 fn body(ui: &mut egui::Ui, detail: &EventDetail) {

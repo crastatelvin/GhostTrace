@@ -156,7 +156,8 @@ fn selecting_a_bin_filters_to_its_window_and_restarts_paging() {
     timeline.refresh();
     timeline.apply_events(timeline.generation(), page(vec![row(0, "resolved")], false));
     let queries = timeline.select_bin(1_000, 2_000);
-    assert_eq!(timeline.filters.window, Some((1_000, 2_000)));
+    assert_eq!(timeline.filters.after_seconds, Some(1_000));
+    assert_eq!(timeline.filters.before_seconds, Some(2_000));
     assert_eq!(timeline.generation(), 2);
     match &queries[0] {
         QueryRequest::Events { query, .. } => {
