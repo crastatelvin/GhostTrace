@@ -217,6 +217,46 @@ fn read_quoted_phrase(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> C
 /// Search over the indexed event text with the timeline's structured filters.
 ///
 /// The full-text condition is combined with the parameterized filters of
+/// Search over timed events. The FTS subquery drives the join: a plain
+/// `JOIN events_fts ON ...` lets SQLite choose the timeline index and evaluate
+/// `MATCH` once per event, which turns a rare-term search on a million-event
+/// revision into a full scan. `CROSS JOIN` pins the order SQLite documents.
+const SEARCH_RESOLVED_SQL: &str = "SELECT e.id, e.revision, e.kind, e.summary,
+            e.host_claim, e.chosen_seconds, e.chosen_nanos, e.time_status
+     FROM (SELECT rowid FROM events_fts WHERE events_fts MATCH ?1) AS m
+     CROSS JOIN events AS e
+     WHERE e.rowid = m.rowid
+       AND e.revision = ?2 AND e.chosen_seconds IS NOT NULL
+       AND (?3 IS NULL OR e.kind = ?3)
+       AND (?4 IS NULL OR e.host_claim = ?4)
+       AND (?5 IS NULL OR e.chosen_seconds >= ?5)
+       AND (?6 IS NULL OR e.chosen_seconds < ?6)
+       AND (?7 IS NULL OR EXISTS (
+             SELECT 1 FROM parse_runs p
+             WHERE p.id = e.parse_run_id AND p.parser_id = ?7))
+       AND (e.chosen_seconds > ?8
+            OR (e.chosen_seconds = ?8 AND (e.chosen_nanos > ?9
+                                           OR (e.chosen_nanos = ?9
+                                               AND e.id > ?10))))
+     ORDER BY e.chosen_seconds, e.chosen_nanos, e.id
+     LIMIT ?11";
+
+/// The same contract for the explicit unresolved view, ordered by event id.
+const SEARCH_UNRESOLVED_SQL: &str = "SELECT e.id, e.revision, e.kind, e.summary,
+            e.host_claim, e.chosen_seconds, e.chosen_nanos, e.time_status
+     FROM (SELECT rowid FROM events_fts WHERE events_fts MATCH ?1) AS m
+     CROSS JOIN events AS e
+     WHERE e.rowid = m.rowid
+       AND e.revision = ?2 AND e.chosen_seconds IS NULL
+       AND (?3 IS NULL OR e.kind = ?3)
+       AND (?4 IS NULL OR e.host_claim = ?4)
+       AND (?5 IS NULL OR EXISTS (
+             SELECT 1 FROM parse_runs p
+             WHERE p.id = e.parse_run_id AND p.parser_id = ?5))
+       AND e.id > ?6
+     ORDER BY e.id
+     LIMIT ?7";
+
 /// `EventQuery`; the statements are fixed and every value — including the
 /// validated FTS5 expression — is bound. Page order is the timeline's total
 /// order (chosen time, nanos, event id), so results never skip or repeat.
@@ -235,22 +275,7 @@ pub fn search_events(
     let mut rows = if query.unresolved_only {
         let mut statement = reader
             .connection()
-            .prepare_cached(
-                "SELECT e.id, e.revision, e.kind, e.summary, e.host_claim,
-                        e.chosen_seconds, e.chosen_nanos, e.time_status
-                 FROM events AS e
-                 JOIN events_fts ON events_fts.rowid = e.rowid
-                 WHERE events_fts MATCH ?1
-                   AND e.revision = ?2 AND e.chosen_seconds IS NULL
-                   AND (?3 IS NULL OR e.kind = ?3)
-                   AND (?4 IS NULL OR e.host_claim = ?4)
-                   AND (?5 IS NULL OR EXISTS (
-                         SELECT 1 FROM parse_runs p
-                         WHERE p.id = e.parse_run_id AND p.parser_id = ?5))
-                   AND e.id > ?6
-                 ORDER BY e.id
-                 LIMIT ?7",
-            )
+            .prepare_cached(SEARCH_UNRESOLVED_SQL)
             .map_err(|e| CoreError::Storage(format!("search prepare: {e}")))?;
         let mapped = statement
             .query_map(
@@ -272,27 +297,7 @@ pub fn search_events(
     } else {
         let mut statement = reader
             .connection()
-            .prepare_cached(
-                "SELECT e.id, e.revision, e.kind, e.summary, e.host_claim,
-                        e.chosen_seconds, e.chosen_nanos, e.time_status
-                 FROM events AS e
-                 JOIN events_fts ON events_fts.rowid = e.rowid
-                 WHERE events_fts MATCH ?1
-                   AND e.revision = ?2 AND e.chosen_seconds IS NOT NULL
-                   AND (?3 IS NULL OR e.kind = ?3)
-                   AND (?4 IS NULL OR e.host_claim = ?4)
-                   AND (?5 IS NULL OR e.chosen_seconds >= ?5)
-                   AND (?6 IS NULL OR e.chosen_seconds < ?6)
-                   AND (?7 IS NULL OR EXISTS (
-                         SELECT 1 FROM parse_runs p
-                         WHERE p.id = e.parse_run_id AND p.parser_id = ?7))
-                   AND (e.chosen_seconds > ?8
-                        OR (e.chosen_seconds = ?8 AND (e.chosen_nanos > ?9
-                                                       OR (e.chosen_nanos = ?9
-                                                           AND e.id > ?10))))
-                 ORDER BY e.chosen_seconds, e.chosen_nanos, e.id
-                 LIMIT ?11",
-            )
+            .prepare_cached(SEARCH_RESOLVED_SQL)
             .map_err(|e| CoreError::Storage(format!("search prepare: {e}")))?;
         let mapped = statement
             .query_map(
@@ -452,5 +457,94 @@ mod tests {
         let long = "word ".repeat(2_000);
         let error = validate_search_text(&long).unwrap_err();
         assert!(matches!(error, CoreError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn search_plan_drives_the_join_from_the_fts_index() {
+        // A plan that scans `events` evaluates MATCH once per row. On the
+        // 1-million-event corpus that took 33 s instead of 1 ms.
+        let connection = Connection::open_in_memory().expect("memory db");
+        connection
+            .execute_batch(
+                "CREATE TABLE parse_runs (id TEXT PRIMARY KEY, parser_id TEXT NOT NULL);
+                 CREATE TABLE events (
+                     id TEXT PRIMARY KEY NOT NULL,
+                     revision TEXT NOT NULL,
+                     parse_run_id TEXT NOT NULL,
+                     kind TEXT NOT NULL,
+                     summary TEXT NOT NULL,
+                     host_claim TEXT,
+                     chosen_seconds INTEGER,
+                     chosen_nanos INTEGER NOT NULL DEFAULT 0,
+                     time_status TEXT NOT NULL
+                 );
+                 CREATE INDEX events_by_time_keyset
+                     ON events(revision, chosen_seconds, chosen_nanos, id);
+                 CREATE VIRTUAL TABLE events_fts USING fts5(
+                     summary, kind, host_claim,
+                     content = 'events', content_rowid = 'rowid',
+                     tokenize = 'unicode61'
+                 );
+                 INSERT INTO parse_runs (id, parser_id) VALUES ('run-1', 'jsonl.fields');
+                 INSERT INTO events
+                     (id, revision, parse_run_id, kind, summary, host_claim,
+                      chosen_seconds, chosen_nanos, time_status)
+                 VALUES ('ev-1', 'run-1', 'run-1', 'log.record', 'needle', 'host-a',
+                         100, 0, 'resolved');
+                 INSERT INTO events_fts (rowid, summary, kind, host_claim)
+                     SELECT rowid, summary, kind, host_claim FROM events;",
+            )
+            .expect("schema");
+
+        for (sql, timed) in [(SEARCH_RESOLVED_SQL, true), (SEARCH_UNRESOLVED_SQL, false)] {
+            let mut statement = connection
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .expect("explain");
+            let mut values: Vec<Box<dyn rusqlite::ToSql>> = vec![
+                Box::new("needle".to_string()),
+                Box::new("run-1".to_string()),
+                Box::new(None::<String>),
+                Box::new(None::<String>),
+            ];
+            if timed {
+                values.extend([
+                    Box::new(None::<i64>) as Box<dyn rusqlite::ToSql>,
+                    Box::new(None::<i64>),
+                    Box::new(None::<String>),
+                    Box::new(0i64),
+                    Box::new(0u32),
+                    Box::new(String::new()),
+                    Box::new(10i64),
+                ]);
+            } else {
+                values.extend([
+                    Box::new(None::<String>) as Box<dyn rusqlite::ToSql>,
+                    Box::new(String::new()),
+                    Box::new(10i64),
+                ]);
+            }
+            let refs: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|value| value.as_ref()).collect();
+            let plan: Vec<String> = statement
+                .query_map(rusqlite::params_from_iter(refs), |row| {
+                    row.get::<_, String>(3)
+                })
+                .expect("plan rows")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("plan");
+            assert!(
+                plan.iter().any(|line| line.contains("events_fts")),
+                "{plan:?}"
+            );
+            assert!(
+                plan.iter()
+                    .any(|line| line.contains("SEARCH e USING INTEGER PRIMARY KEY")),
+                "the event rows are looked up by rowid: {plan:?}"
+            );
+            assert!(
+                !plan.iter().any(|line| line.starts_with("SCAN events ")),
+                "the plan must not scan the event table: {plan:?}"
+            );
+        }
     }
 }

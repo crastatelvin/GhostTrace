@@ -17,6 +17,7 @@ use crate::analysis::correlate::{
 use crate::analysis::entities::EntityBuildReport;
 use crate::analysis::rules::{AnalysisReport, AnalysisRequest};
 use crate::analysis::views::{SavedFilter, SavedView};
+use crate::domain::detail::{EventDetail, Histogram};
 use crate::domain::finding::Finding;
 use crate::domain::query::{EventPage, EventQuery};
 use crate::error::{CoreError, CoreResult};
@@ -209,6 +210,34 @@ impl CaseSession {
     pub fn query_events(&self, query: &EventQuery) -> CoreResult<EventPage> {
         let reader = self.reader()?;
         reader.query_events(&self.display_timezone, query)
+    }
+
+    /// Search the indexed text of one revision (plan P4.4 contract).
+    pub fn search_events(&self, query: &EventQuery, text: &str) -> CoreResult<EventPage> {
+        let reader = self.reader()?;
+        let text = crate::storage::search::validate_search_text(text)?;
+        crate::storage::search::search_events(&reader, &self.display_timezone, query, &text)
+    }
+
+    /// Everything the inspector shows for one event.
+    pub fn event_detail(&self, revision: &str, event_id: &str) -> CoreResult<EventDetail> {
+        self.reader()?.event_detail(revision, event_id)
+    }
+
+    /// Bounded time histogram over the same filters, optionally restricted to
+    /// the search expression. The bin width is returned with the counts.
+    pub fn event_histogram(
+        &self,
+        query: &EventQuery,
+        text: Option<&str>,
+        bins: u32,
+    ) -> CoreResult<Histogram> {
+        let reader = self.reader()?;
+        let text = match text.map(str::trim).filter(|text| !text.is_empty()) {
+            Some(text) => Some(crate::storage::search::validate_search_text(text)?),
+            None => None,
+        };
+        reader.event_histogram(query, text.as_ref(), bins)
     }
 
     /// Resolve scoped entities for one parse run (plan P5.1). Idempotent.

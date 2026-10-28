@@ -1,0 +1,192 @@
+//! Evidence inspector: the exact provenance of one selected event (plan P6.2).
+//!
+//! Shows the recorded raw record and locator, every time value with its
+//! assumptions, scoped entities, parser identity, and the parse run's own
+//! diagnostics. Recorded text is escaped and bounded; nothing here is
+//! interpreted as markup, a link, or a terminal sequence.
+
+use eframe::egui;
+use ghosttrace_core::domain::detail::{EntityRef, EventDetail, EventTimeDetail};
+use ghosttrace_core::text::{MAX_PREVIEW_BYTES, escape_for_display};
+
+use crate::state::AppState;
+
+pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
+    ui.heading("Evidence inspector");
+    let Some(detail) = state.timeline.detail.clone() else {
+        ui.label("Select an event to inspect its exact provenance.");
+        return;
+    };
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| body(ui, &detail));
+}
+
+fn body(ui: &mut egui::Ui, detail: &EventDetail) {
+    ui.label(format!("Event {}", detail.event.event_id));
+    ui.label(format!(
+        "Kind {} · host {}",
+        detail.event.kind,
+        detail
+            .event
+            .host_claim
+            .as_deref()
+            .unwrap_or("none recorded")
+    ));
+    ui.label(format!(
+        "Parser {} · version {}",
+        detail.parser_id, detail.parser_version
+    ));
+    ui.label(format!("Parse run {}", detail.parse_run_id));
+    ui.label(format!(
+        "Time status: {}",
+        match detail.event.time_status.as_str() {
+            "resolved" => "resolved",
+            "ambiguous" => "ambiguous time — candidates remain",
+            "unresolved" => "unresolved time — no chosen instant",
+            "invalid" => "invalid time — the recorded value cannot be used",
+            _ => "unknown time status",
+        }
+    ));
+    if !detail.source_linked {
+        ui.label(
+            "Source link not recorded for this event. The raw record cannot be reopened \
+             without guessing, so none is shown.",
+        );
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("Copy event id").clicked() {
+            ui.ctx().copy_text(detail.event.event_id.clone());
+        }
+        for observation in &detail.observations {
+            if ui.button("Copy locator").clicked() {
+                ui.ctx().copy_text(observation.locator_identity.clone());
+            }
+            if ui.button("Copy raw record").clicked() {
+                ui.ctx().copy_text(observation.raw_fields_json.clone());
+            }
+        }
+    });
+
+    ui.separator();
+    ui.heading("Times");
+    if detail.times.is_empty() {
+        ui.label("No named time was recorded for this event.");
+    }
+    for time in &detail.times {
+        time_entry(ui, time);
+    }
+
+    ui.separator();
+    ui.heading("Raw record");
+    if detail.observations.is_empty() {
+        ui.label("No raw observation is linked to this event.");
+    }
+    for observation in &detail.observations {
+        ui.label(format!(
+            "Evidence {} · acquisition {}",
+            observation.evidence_id, observation.acquisition_id
+        ));
+        ui.label(format!("Path {}", observation.evidence_path));
+        ui.label(format!(
+            "Locator {} {}",
+            observation.locator_kind, observation.locator_identity
+        ));
+        let (raw, truncated) = escape_for_display(&observation.raw_fields_json, MAX_PREVIEW_BYTES);
+        let mut buffer = raw;
+        ui.add(
+            egui::TextEdit::multiline(&mut buffer)
+                .code_editor()
+                .interactive(false)
+                .desired_rows(8)
+                .desired_width(f32::INFINITY),
+        );
+        if truncated {
+            ui.label("Preview truncated; use Copy raw record for the full value.");
+        }
+    }
+
+    ui.separator();
+    ui.heading("Entities");
+    if detail.entities.is_empty() {
+        ui.label("No scoped entities were resolved for this revision yet.");
+    }
+    for entity in &detail.entities {
+        entity_entry(ui, entity);
+    }
+
+    ui.separator();
+    ui.collapsing("Parse run diagnostics", |ui| {
+        ui.label("Diagnostics are recorded for the whole parse run, not this record.");
+        if detail.run_diagnostics.is_empty() {
+            ui.label("The run recorded no diagnostics.");
+        }
+        for diagnostic in &detail.run_diagnostics {
+            let (detail_text, _) = escape_for_display(&diagnostic.detail, 2_048);
+            ui.label(format!(
+                "{} · {} · {}",
+                diagnostic.code, diagnostic.locator, detail_text
+            ));
+        }
+        let (assumptions, _) = escape_for_display(&detail.run_assumptions_json, 4_096);
+        ui.label(format!("Recorded run assumptions: {assumptions}"));
+    });
+}
+
+fn time_entry(ui: &mut egui::Ui, time: &EventTimeDetail) {
+    ui.label(format!(
+        "{} · {} · {}",
+        time.name, time.status, time.semantic
+    ));
+    if time.status != "resolved" {
+        ui.label(format!(
+            "{} time: the recorded value is shown below but cannot be placed on the timeline.",
+            time.status
+        ));
+    }
+    ui.label(format!(
+        "Raw field {} = {}",
+        time.raw_field.as_deref().unwrap_or("none"),
+        time.raw_value.as_deref().unwrap_or("none")
+    ));
+    ui.label(format!(
+        "Epoch {} · unit {} · precision {} · clock domain {}",
+        time.epoch, time.unit, time.declared_precision, time.clock_domain
+    ));
+    for assumption in assumption_lines(&time.assumptions_json) {
+        ui.label(format!("Assumption: {assumption}"));
+    }
+}
+
+fn entity_entry(ui: &mut egui::Ui, entity: &EntityRef) {
+    ui.label(format!(
+        "{} · {} · role {}",
+        entity.kind, entity.display_form, entity.role
+    ));
+}
+
+/// Recorded assumptions are JSON objects; render each one as escaped text and
+/// fall back to the raw JSON when the recorded shape is unexpected.
+fn assumption_lines(json: &str) -> Vec<String> {
+    let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
+        return vec![escape_for_display(json, 512).0];
+    };
+    items
+        .iter()
+        .map(|item| {
+            let mut line = item
+                .get("description")
+                .and_then(|value| value.as_str())
+                .unwrap_or("recorded assumption")
+                .to_string();
+            if let Some(zone) = item.get("zone").and_then(|value| value.as_str()) {
+                line.push_str(&format!(" (zone {zone})"));
+            }
+            if let Some(year) = item.get("year_assumed").and_then(|value| value.as_i64()) {
+                line.push_str(&format!(" (year {year} assumed)"));
+            }
+            escape_for_display(&line, 512).0
+        })
+        .collect()
+}

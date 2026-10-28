@@ -150,3 +150,17 @@ file records implemented capability only.
   job results are discarded by id. The P0.1 pilot app is replaced by this shell.
   Headless `egui_kittest` tests address controls by accessible name
   (`docs/gui-guide.md`).
+- P6.2 (2026-10-28): responsive native timeline and provenance inspector —
+  validated search plus exact kind/host/source filters, a 350 ms debounced
+  query with generation-based supersession, a declared-bin histogram that
+  filters to a selected window, a virtualized keyset-paged list with a bounded
+  1,000-row cache, an explicit unresolved view, and a resizable inspector that
+  shows the raw record and locator, recorded times and assumptions, scoped
+  entities, parser identity, and run diagnostics with copy actions and an
+  inert escaped preview. Reads run on a second worker thread with their own
+  reader, so an import never blocks the UI. A 1,000,000-event measurement
+  (page 1 ms, histogram 0.5 s, detail 1 ms, phrase search 1.4 ms) exposed an
+  FTS join plan that scanned every event (33 s); the FTS subquery now drives
+  the join and a query-plan test guards it. New core contracts:
+  `event_detail()`, `event_histogram()`, and display escaping
+  (`docs/gui-guide.md`).

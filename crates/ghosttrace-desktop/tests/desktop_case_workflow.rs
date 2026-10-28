@@ -37,6 +37,7 @@ fn open_case(state: &mut AppState) {
         id,
         outcome: Outcome::CaseCreated {
             directory: "/tmp/demo.ghosttrace-case".into(),
+            database_path: "/tmp/demo.ghosttrace-case/case.sqlite".into(),
             label: "Demo".into(),
             timezone: "UTC".into(),
         },
@@ -176,8 +177,10 @@ fn recovery_review_lists_interrupted_jobs_and_can_be_acknowledged() {
         id,
         outcome: Outcome::CaseOpened {
             directory: "/tmp/demo.ghosttrace-case".into(),
+            database_path: "/tmp/demo.ghosttrace-case/case.sqlite".into(),
             label: "Demo".into(),
             timezone: "UTC".into(),
+            revision: None,
             acquisitions: Vec::new(),
             recovery: vec![RecoveryItem {
                 job_id: "job-1".into(),
@@ -220,6 +223,7 @@ fn stale_results_are_ignored() {
         id: id + 99,
         outcome: Outcome::CaseCreated {
             directory: "/tmp/other.ghosttrace-case".into(),
+            database_path: "/tmp/other.ghosttrace-case/case.sqlite".into(),
             label: "Other".into(),
             timezone: "UTC".into(),
         },
@@ -231,6 +235,7 @@ fn stale_results_are_ignored() {
         id,
         outcome: Outcome::CaseCreated {
             directory: "/tmp/demo.ghosttrace-case".into(),
+            database_path: "/tmp/demo.ghosttrace-case/case.sqlite".into(),
             label: "Demo".into(),
             timezone: "UTC".into(),
         },

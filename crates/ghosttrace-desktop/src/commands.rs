@@ -110,13 +110,19 @@ impl Command {
 pub enum Outcome {
     CaseCreated {
         directory: String,
+        /// Absolute case database path for the read-only query worker. The
+        /// desktop only accepts UTF-8 paths, so this conversion loses nothing.
+        database_path: String,
         label: String,
         timezone: String,
     },
     CaseOpened {
         directory: String,
+        database_path: String,
         label: String,
         timezone: String,
+        /// Active revision at open time; `None` when the case has no parse run.
+        revision: Option<String>,
         acquisitions: Vec<AcquisitionSummary>,
         recovery: Vec<RecoveryItem>,
     },
@@ -345,6 +351,11 @@ fn create_case(directory: &str, label: String, timezone: String) -> CoreResult<O
     let session = CaseSession::create(parent, &id, spec)?;
     Ok(Outcome::CaseCreated {
         directory: native_path(session.layout().root()).encoded(),
+        database_path: session
+            .layout()
+            .database_path()
+            .to_string_lossy()
+            .into_owned(),
         label,
         timezone,
     })
@@ -354,10 +365,17 @@ fn open_case(directory: &str) -> CoreResult<Outcome> {
     let (session, report) = CaseSession::open(PathBuf::from(directory))?;
     let reader = session.reader()?;
     let acquisitions = list_acquisitions(&reader)?;
+    let revision = reader.latest_revision(None)?;
     Ok(Outcome::CaseOpened {
         directory: native_path(session.layout().root()).encoded(),
+        database_path: session
+            .layout()
+            .database_path()
+            .to_string_lossy()
+            .into_owned(),
         label: session.config().label.clone(),
         timezone: session.config().display_timezone.clone(),
+        revision,
         acquisitions,
         recovery: report
             .recoverable_jobs

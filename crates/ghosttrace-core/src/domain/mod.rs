@@ -5,6 +5,7 @@
 //! separate types so interpretations never overwrite facts.
 
 pub mod case;
+pub mod detail;
 pub mod event;
 pub mod evidence;
 pub mod finding;
@@ -13,6 +14,10 @@ pub mod query;
 pub mod time;
 
 pub use case::{Acquisition, AcquisitionId, AcquisitionMethod, AcquisitionState, Case, CaseId};
+pub use detail::{
+    EntityRef, EventDetail, EventTimeDetail, Histogram, HistogramBin, ObservationDetail,
+    RunDiagnostic,
+};
 pub use event::{Event, NamedEventTimeRef, RawObservation, RecordLocator};
 pub use evidence::{
     DigestStatus, EvidenceObject, EvidenceObjectKind, FileObservation, NamedEventTime,

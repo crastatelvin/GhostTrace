@@ -10,9 +10,14 @@ use std::path::Path;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
+use crate::domain::detail::{
+    EntityRef, EventDetail, EventTimeDetail, Histogram, HistogramBin, ObservationDetail,
+    RunDiagnostic,
+};
 use crate::domain::query::{EventPage, EventQuery, EventRow, TimeCursor};
 use crate::error::{CoreError, CoreResult};
 use crate::jobs::{JobKind, JobState, RecoverableJob};
+use crate::storage::search::FtsQuery;
 
 /// A short-lived read-only connection to a case database.
 pub struct CaseReader {
@@ -228,6 +233,353 @@ impl CaseReader {
             next_cursor,
             display_timezone: display_timezone.to_string(),
         })
+    }
+
+    /// One event with everything the inspector shows: raw observations and
+    /// their locators, every recorded time with assumptions, scoped entities,
+    /// and the producing parse run. A missing source link is reported, never
+    /// guessed.
+    pub fn event_detail(&self, revision: &str, event_id: &str) -> CoreResult<EventDetail> {
+        let (event, parse_run_id, evidence_id, locator_identity) = self
+            .connection
+            .query_row(
+                "SELECT id, revision, kind, summary, host_claim, chosen_seconds,
+                        chosen_nanos, time_status, parse_run_id, evidence_id,
+                        locator_identity
+                 FROM events
+                 WHERE revision = ?1 AND id = ?2",
+                rusqlite::params![revision, event_id],
+                |row| {
+                    Ok((
+                        row_to_event(row)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                        row.get::<_, Option<String>>(10)?,
+                    ))
+                },
+            )
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    CoreError::InvalidInput(format!("no event {event_id} in revision {revision}"))
+                }
+                other => CoreError::Storage(format!("read event: {other}")),
+            })?;
+
+        let (parser_id, parser_version, diagnostics_json, assumptions_json) = self
+            .connection
+            .query_row(
+                "SELECT parser_id, parser_version, diagnostics_json, assumptions_json
+                 FROM parse_runs WHERE id = ?1",
+                [&parse_run_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map_err(|error| CoreError::Storage(format!("read parse run: {error}")))?;
+        let run_diagnostics: Vec<RunDiagnostic> =
+            serde_json::from_str(&diagnostics_json).map_err(|error| {
+                CoreError::Storage(format!(
+                    "recorded parse diagnostics are unreadable: {error}"
+                ))
+            })?;
+
+        let source_linked = evidence_id.is_some() && locator_identity.is_some();
+        let mut observations = Vec::new();
+        if let (Some(evidence_id), Some(locator_identity)) = (&evidence_id, &locator_identity) {
+            let mut statement = self
+                .connection
+                .prepare_cached(
+                    "SELECT r.evidence_id, r.acquisition_id, o.native_path_encoded,
+                            r.locator_kind, r.locator_identity, r.raw_fields_json
+                     FROM raw_observations r
+                     JOIN evidence_objects o ON o.id = r.evidence_id
+                     WHERE r.parse_run_id = ?1 AND r.evidence_id = ?2
+                       AND r.locator_identity = ?3
+                     ORDER BY r.id",
+                )
+                .map_err(|error| CoreError::Storage(format!("prepare observations: {error}")))?;
+            let rows = statement
+                .query_map(
+                    rusqlite::params![parse_run_id, evidence_id, locator_identity],
+                    |row| {
+                        Ok(ObservationDetail {
+                            evidence_id: row.get(0)?,
+                            acquisition_id: row.get(1)?,
+                            evidence_path: row.get(2)?,
+                            locator_kind: row.get(3)?,
+                            locator_identity: row.get(4)?,
+                            raw_fields_json: row.get(5)?,
+                        })
+                    },
+                )
+                .map_err(|error| CoreError::Storage(format!("read observations: {error}")))?;
+            observations = rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| CoreError::Storage(format!("read observations: {error}")))?;
+        }
+
+        let mut statement = self
+            .connection
+            .prepare_cached(
+                "SELECT name, semantic, status, candidates_json, raw_field,
+                        raw_value_kind, raw_value_text, raw_text, epoch, unit,
+                        declared_precision, clock_domain, assumptions_json
+                 FROM event_times WHERE event_id = ?1 ORDER BY id",
+            )
+            .map_err(|error| CoreError::Storage(format!("prepare times: {error}")))?;
+        let rows = statement
+            .query_map([event_id], |row| {
+                let raw_value_kind: Option<String> = row.get(5)?;
+                let raw_value = if raw_value_kind.as_deref() == Some("integer") {
+                    row.get::<_, Option<String>>(6)?
+                } else {
+                    row.get::<_, Option<String>>(7)?
+                };
+                Ok(EventTimeDetail {
+                    name: row.get(0)?,
+                    semantic: row.get(1)?,
+                    status: row.get(2)?,
+                    candidates_json: row.get(3)?,
+                    raw_field: row.get(4)?,
+                    raw_value_kind,
+                    raw_value,
+                    epoch: row.get(8)?,
+                    unit: row.get(9)?,
+                    declared_precision: row.get(10)?,
+                    clock_domain: row.get(11)?,
+                    assumptions_json: row.get(12)?,
+                })
+            })
+            .map_err(|error| CoreError::Storage(format!("read times: {error}")))?;
+        let times = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| CoreError::Storage(format!("read times: {error}")))?;
+
+        let mut statement = self
+            .connection
+            .prepare_cached(
+                "SELECT en.id, en.kind, en.display_form, ee.role
+                 FROM event_entities ee
+                 JOIN entities en ON en.id = ee.entity_id
+                 WHERE ee.event_id = ?1
+                 ORDER BY en.kind, en.display_form, ee.role",
+            )
+            .map_err(|error| CoreError::Storage(format!("prepare entities: {error}")))?;
+        let rows = statement
+            .query_map([event_id], |row| {
+                Ok(EntityRef {
+                    entity_id: row.get(0)?,
+                    kind: row.get(1)?,
+                    display_form: row.get(2)?,
+                    role: row.get(3)?,
+                })
+            })
+            .map_err(|error| CoreError::Storage(format!("read entities: {error}")))?;
+        let entities = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| CoreError::Storage(format!("read entities: {error}")))?;
+
+        Ok(EventDetail {
+            event,
+            parse_run_id,
+            parser_id,
+            parser_version,
+            source_linked,
+            observations,
+            times,
+            entities,
+            run_diagnostics,
+            run_assumptions_json: assumptions_json,
+        })
+    }
+
+    /// Bounded time histogram over the same filters as [`Self::query_events`],
+    /// optionally restricted to FTS matches. Events without a chosen time
+    /// cannot be binned and are counted separately.
+    pub fn event_histogram(
+        &self,
+        query: &EventQuery,
+        text: Option<&FtsQuery>,
+        bins: u32,
+    ) -> CoreResult<Histogram> {
+        let bins = bins.clamp(4, 120);
+        // The FTS subquery drives the join. A plain `JOIN events_fts ON ...`
+        // lets SQLite pick the timeline index and evaluate MATCH once per
+        // event, which turns a rare-term search into a full revision scan.
+        // CROSS JOIN is SQLite's documented way to pin that join order.
+        let (source, link) = if text.is_some() {
+            (
+                "(SELECT rowid FROM events_fts WHERE events_fts MATCH :match_text) AS m
+                 CROSS JOIN events AS e",
+                "e.rowid = m.rowid",
+            )
+        } else {
+            ("events AS e", "1 = 1")
+        };
+        let filters = "e.revision = :revision
+            AND (:kind IS NULL OR e.kind = :kind)
+            AND (:host IS NULL OR e.host_claim = :host)
+            AND (:source IS NULL OR EXISTS (
+                  SELECT 1 FROM parse_runs p
+                  WHERE p.id = e.parse_run_id AND p.parser_id = :source))";
+
+        let base_params = || -> Vec<(&'static str, Box<dyn rusqlite::ToSql>)> {
+            let mut params: Vec<(&'static str, Box<dyn rusqlite::ToSql>)> = vec![
+                (":revision", Box::new(query.revision.clone())),
+                (":kind", Box::new(query.kind.clone())),
+                (":host", Box::new(query.host.clone())),
+                (":source", Box::new(query.source.clone())),
+            ];
+            if let Some(text) = text {
+                params.push((":match_text", Box::new(text.expression.clone())));
+            }
+            params
+        };
+
+        let unresolved_sql = format!(
+            "SELECT count(*) FROM {source}
+             WHERE {link} AND {filters} AND e.chosen_seconds IS NULL"
+        );
+        let unresolved: i64 =
+            self.histogram_row(&unresolved_sql, &base_params(), |row| row.get(0))?;
+        let unresolved_count = u64::try_from(unresolved).unwrap_or(0);
+
+        if query.unresolved_only {
+            return Ok(Histogram {
+                bin_seconds: 1,
+                from_seconds: query.after_seconds.unwrap_or(0),
+                to_seconds: query.before_seconds.unwrap_or(0),
+                bins: Vec::new(),
+                unresolved_count,
+                total: unresolved_count,
+            });
+        }
+
+        let bounds_sql = format!(
+            "SELECT min(e.chosen_seconds), max(e.chosen_seconds)
+             FROM {source}
+             WHERE {link} AND {filters}
+               AND e.chosen_seconds IS NOT NULL
+               AND (:after_seconds IS NULL OR e.chosen_seconds >= :after_seconds)
+               AND (:before_seconds IS NULL OR e.chosen_seconds < :before_seconds)"
+        );
+        let mut bounds_params = base_params();
+        bounds_params.push((":after_seconds", Box::new(query.after_seconds)));
+        bounds_params.push((":before_seconds", Box::new(query.before_seconds)));
+        let (min, max): (Option<i64>, Option<i64>) =
+            self.histogram_row(&bounds_sql, &bounds_params, |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+
+        let from = query.after_seconds.or(min);
+        let to = query
+            .before_seconds
+            .or(max.map(|max| max.saturating_add(1)));
+        let (Some(from), Some(to)) = (from, to) else {
+            return Ok(Histogram {
+                bin_seconds: 1,
+                from_seconds: 0,
+                to_seconds: 0,
+                bins: Vec::new(),
+                unresolved_count,
+                total: unresolved_count,
+            });
+        };
+        if to <= from {
+            return Ok(Histogram {
+                bin_seconds: 1,
+                from_seconds: from,
+                to_seconds: to.max(from),
+                bins: Vec::new(),
+                unresolved_count,
+                total: unresolved_count,
+            });
+        }
+
+        let span = to - from;
+        let bin_seconds = (span + i64::from(bins) - 1) / i64::from(bins);
+        let bin_seconds = bin_seconds.max(1);
+        let bin_count = (span + bin_seconds - 1) / bin_seconds;
+        let counts_sql = format!(
+            "SELECT ((e.chosen_seconds - :from_seconds) / :bin_seconds) AS bin,
+                    count(*)
+             FROM {source}
+             WHERE {link} AND {filters}
+               AND e.chosen_seconds >= :from_seconds
+               AND e.chosen_seconds < :to_seconds
+             GROUP BY bin ORDER BY bin"
+        );
+        let mut counts_params = base_params();
+        counts_params.push((":from_seconds", Box::new(from)));
+        counts_params.push((":to_seconds", Box::new(to)));
+        counts_params.push((":bin_seconds", Box::new(bin_seconds)));
+        let counts = self.histogram_counts(&counts_sql, &counts_params)?;
+
+        let bins_out: Vec<HistogramBin> = (0..bin_count)
+            .map(|index| {
+                let start = from + bin_seconds * index;
+                HistogramBin {
+                    start_seconds: start,
+                    end_seconds: start + bin_seconds,
+                    count: counts
+                        .iter()
+                        .find(|(bin, _)| *bin == index)
+                        .map_or(0, |(_, count)| *count),
+                }
+            })
+            .collect();
+        let binned: u64 = bins_out.iter().map(|bin| bin.count).sum();
+        Ok(Histogram {
+            bin_seconds,
+            from_seconds: from,
+            to_seconds: to,
+            bins: bins_out,
+            unresolved_count,
+            total: binned + unresolved_count,
+        })
+    }
+
+    fn histogram_row<T>(
+        &self,
+        sql: &str,
+        params: &[(&'static str, Box<dyn rusqlite::ToSql>)],
+        map: impl FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    ) -> CoreResult<T> {
+        let refs: Vec<(&str, &dyn rusqlite::ToSql)> = params
+            .iter()
+            .map(|(name, value)| (*name, value.as_ref()))
+            .collect();
+        self.connection
+            .query_row(sql, &refs[..], map)
+            .map_err(|error| CoreError::Storage(format!("histogram: {error}")))
+    }
+
+    fn histogram_counts(
+        &self,
+        sql: &str,
+        params: &[(&'static str, Box<dyn rusqlite::ToSql>)],
+    ) -> CoreResult<Vec<(i64, u64)>> {
+        let refs: Vec<(&str, &dyn rusqlite::ToSql)> = params
+            .iter()
+            .map(|(name, value)| (*name, value.as_ref()))
+            .collect();
+        let mut statement = self
+            .connection
+            .prepare_cached(sql)
+            .map_err(|error| CoreError::Storage(format!("prepare histogram: {error}")))?;
+        let rows = statement
+            .query_map(&refs[..], |row| {
+                let count: i64 = row.get(1)?;
+                Ok((row.get::<_, i64>(0)?, u64::try_from(count).unwrap_or(0)))
+            })
+            .map_err(|error| CoreError::Storage(format!("read histogram: {error}")))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| CoreError::Storage(format!("read histogram: {error}")))
     }
 }
 

@@ -17,6 +17,8 @@ screenshot = ["eframe/__screenshot"]
 
 [dependencies]
 ghosttrace-core = { path = "../ghosttrace-core" }
+chrono.workspace = true
+chrono-tz.workspace = true
 # eframe default features are off so the `glow`/`wgpu` crate features select
 # exactly one backend; the shared set below matches eframe's non-renderer
 # defaults (accesskit, fonts, platform windows).

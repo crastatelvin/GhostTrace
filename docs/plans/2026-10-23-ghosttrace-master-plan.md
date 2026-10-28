@@ -923,11 +923,17 @@ Define `xtask check` in P0 to run documented supported feature combinations and 
 
 **Consumes:** Query/FTS/time-review/detail services. **Produces:** Virtualized filtered timeline and evidence drill-down.
 
-- [ ] Test filter/search/page selection, unresolved view, visible zone, raw locator inspection, assumption review, and query-result supersession.
-- [ ] Implement bounded page cache, debounced search, histogram aggregates, resizable panes, copy actions, and inert raw preview.
-- [ ] Test keyboard focus/order, named custom controls, scaling, high-contrast indicators, no color-only uncertainty encoding.
-- [ ] Measure responsiveness while importing the 1-million-event corpus; fix blocking calls before visual polish.
-- [ ] Commit: `feat: build responsive native timeline and evidence inspector`.
+- [x] Test filter/search/page selection, unresolved view, visible zone, raw locator inspection, assumption review, and query-result supersession.
+- [x] Implement bounded page cache, debounced search, histogram aggregates, resizable panes, copy actions, and inert raw preview.
+- [x] Test keyboard focus/order, named custom controls, scaling, high-contrast indicators, no color-only uncertainty encoding.
+- [x] Measure responsiveness while importing the 1-million-event corpus; fix blocking calls before visual polish.
+  Measured on a generated 1,000,000-event case: page 1.0 ms, next page 0.9 ms,
+  histogram 0.5 s, detail 1.0 ms, phrase search 1.4 ms. Queries run on a second
+  worker thread with their own reader, so an import never blocks the UI. The
+  measurement exposed a search plan that scanned events and evaluated `MATCH`
+  per row (33 s); the FTS subquery now drives the join and a query-plan unit
+  test guards it. Numbers and method are in `docs/gui-guide.md`.
+- [x] Commit: `feat: build responsive native timeline and evidence inspector`.
 
 #### P6.3 — Diff, relationship list/graph, findings, and notes
 
@@ -1117,7 +1123,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P5 | P5.1 | Scoped entities/relationships | [x] |
 | P5 | P5.2 | Explainable rules/notes/views | [x] |
 | P6 | P6.1 | Desktop case/import | [x] |
-| P6 | P6.2 | Desktop timeline/provenance | [ ] |
+| P6 | P6.2 | Desktop timeline/provenance | [x] |
 | P6 | P6.3 | Desktop analysis/notes | [ ] |
 | P6 | P6.4 | Desktop reports/accessibility | [ ] |
 | P7 | P7 | TUI and terminal safety | [ ] |
