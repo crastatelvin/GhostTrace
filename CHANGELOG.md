@@ -164,6 +164,16 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P7 (2026-10-28): interactive terminal workflow — `ghosttrace tui` with a
+  paginated timeline, shared-grammar search, exact kind/host/source/time
+  filters, event detail, five-rule findings, a status/progress line, and an
+  always-visible key footer; evidence text is escaped before rendering and
+  table cells flatten newlines; a restoration guard covers normal exit, early
+  quit, error, and unwind; redirected output is refused so pipelines stay plain.
+  The CLI is now a library plus a thin binary so TUI state/input transitions are
+  tested without a terminal. Linux pty smoke verified enter/leave and cursor
+  restoration exactly once; Windows Terminal and macOS terminal checks remain
+  recorded P10 gate items.
 - P6.4 (2026-10-28): desktop reporting and accessible investigation workflow —
   unredacted report export through the shared `reports::build_report`/`publish`
   path with an explicit scope/time-zone/revision summary, absolute-and-outside-

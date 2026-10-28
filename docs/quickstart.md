@@ -84,3 +84,7 @@ git add <explicit paths> && git diff --cached           # never `git add .`
 
 Phased work, commit messages, and gates are defined in
 `docs/plans/2026-10-23-ghosttrace-master-plan.md` (Sections 16–18).
+
+`ghosttrace tui --case <DIR>` adds an interactive timeline, search, event
+detail, and findings view over the same contracts; it needs a terminal on both
+ends and refuses redirected output.

@@ -998,12 +998,30 @@ recorded in `docs/releases.md`) remains a P10 gate item.
 
 **Consumes:** Existing service/query/analysis contracts. **Produces:** `ghosttrace tui` with timeline, search, detail, findings, progress, and help.
 
-- [ ] Test state/input transitions independent of terminal rendering; escaping of OSC/CSI/control bytes; plain output contains no ANSI when redirected.
-- [ ] Implement only required views; use the same filters/identifiers as desktop/CLI.
-- [ ] Test raw/alternate screen cleanup on normal exit, cancellation, error, and unwind path; run Windows Terminal and Linux/macOS terminal smoke checks.
-- [ ] Commit: `feat: add safe interactive terminal investigation views`.
+- [x] Test state/input transitions independent of terminal rendering; escaping of OSC/CSI/control bytes; plain output contains no ANSI when redirected.
+  `tests/tui_actions.rs` drives `App` actions against a real case (selection,
+  search, filters, unresolved view, analysis, help); `tests/terminal_safety.rs`
+  proves redirected output is refused and plain JSON has no ESC; the buffer
+  test asserts an ESC/BEL payload is rendered as visible text.
+- [x] Implement only required views; use the same filters/identifiers as desktop/CLI.
+  Timeline, search, detail, findings, progress/status, and help; the query is
+  the shared `EventQuery` + FTS validator, detail is `event_detail`, findings
+  are `findings_for_run`. A test compares the TUI rows with `ghosttrace
+  timeline` and the TUI detail with the same `event_detail` record the desktop
+  query worker returns.
+- [x] Test raw/alternate screen cleanup on normal exit, cancellation, error, and unwind path.
+  Unit tests cover normal restore, enter failure, and unwind; a Linux pty smoke
+  (`script`) verified enter/leave and cursor hide/show exactly once with exit 0.
+- [ ] Run Windows Terminal and macOS terminal smoke checks.
+  **Not run on this host**: no Windows or macOS machine is available. Recorded
+  as open P10 release-target checks in `docs/releases.md`; not a pass.
+- [x] Commit: `feat: add safe interactive terminal investigation views`.
 
 **P7 gate:** TUI selections yield the same event/detail records as the GUI. Promote `0.3.0-beta.1` only after P5–P7 and relevant accessibility/performance gates pass.
+Gate evidence: `tests/tui_actions.rs` compares a TUI selection's detail with the
+same `event_detail` record the desktop query worker calls, and compares row
+identifiers/order with `ghosttrace timeline`. Beta promotion remains gated on
+the open accessibility/release-target items recorded in `docs/releases.md`.
 
 ### P8 — Captured Windows events and parser isolation
 
@@ -1157,7 +1175,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P6 | P6.2 | Desktop timeline/provenance | [x] |
 | P6 | P6.3 | Desktop analysis/notes | [x] |
 | P6 | P6.4 | Desktop reports/accessibility | [x] |
-| P7 | P7 | TUI and terminal safety | [ ] |
+| P7 | P7 | TUI and terminal safety | [x] |
 | P8 | P8.1 | EVTX adapters | [ ] |
 | P8 | P8.2 | Isolated parser workers | [ ] |
 | P9 | P9.1 | Signatures/standard private keys/trust | [ ] |
@@ -1169,6 +1187,15 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P12 | P12 | Optional read-only local API | [ ] |
 
 For each completed task, append: `Issue: real URL; PR: real URL; commit: actual SHA; verified: command(s), OS, result; reviewer: name; date: actual completion date`. Keep generated benchmark evidence and significant limitation decisions linked from the task. Use GitHub milestones for release gates and labels `area:capture`, `area:ingest`, `area:storage`, `area:gui`, `area:analysis`, `area:integrity`, `area:docs`, `type:bug`, `type:security`, `status:blocked`, `good-first-issue`, and `help-wanted`.
+
+### P7 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-28).
+- `ghosttrace tui` under a real pty (`script -qec`, input `q`): exit 0, one
+  alternate-screen enter and leave, one cursor hide and show.
+- Open: Windows Terminal and macOS terminal smoke checks (P10 gate items).
 
 ### P6.4 verification record
 

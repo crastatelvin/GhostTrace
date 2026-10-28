@@ -364,3 +364,57 @@ Exit codes: `0` the pass completed, `3` a bound truncated a rule, `2` invalid
 parameters or no revision, `1` storage failure. The same revision and parameter
 set produce the same `run_id` and finding ids, and a stored analyst disposition
 is reported again after a re-run. There is no maliciousness score in any field.
+
+## `tui`
+
+Browses one case interactively. The TUI reads through the same contracts as
+`timeline`, `search`, and `analyze`, so a selection yields the same recorded
+event and detail the desktop inspector shows.
+
+```bash
+ghosttrace tui --case <DIR>.ghosttrace-case [--revision <RUN_ID>]
+```
+
+Views: the paginated timeline, event detail (observations with locators, times
+with assumptions, entities, run diagnostics), findings with their rationale,
+alternatives, predicates, and supporting events, a status/progress line, and
+the key help. The essential keys are always shown in the footer; `?` opens the
+full list.
+
+| Key | Action |
+|---|---|
+| `j`/`k`, `Up`/`Down` | move the selection |
+| `PgUp`/`PgDn`, `J`/`K` | move ten rows |
+| `g`/`G`, `Home`/`End` | first or last row |
+| `n` / `p` | next or previous page |
+| `/` | search with the same grammar as `ghosttrace search` |
+| `f` | exact filters: `kind= host= source= after= before=` |
+| `u` | unresolved-time view |
+| `a` | analyze the active revision with the five compiled rules |
+| `Tab` | switch timeline and findings |
+| `?` | help |
+| `q`, `Ctrl+C` | quit |
+
+Filter values are exact and cannot contain spaces; `after`/`before` take
+RFC 3339 instants and must be given in order. Unknown or repeated keys, empty
+values, and bad instants are errors in the status line, never silently ignored.
+A revision is resolved once at start (the newest parse run unless `--revision`
+is given); a case with no parse run opens with an explicit empty state.
+
+Safety:
+
+- Evidence text is escaped with `ghosttrace_core::text::escape_for_display`
+  before it reaches the terminal, so OSC/CSI/control bytes in a log are shown
+  as text. Table cells also flatten newlines so a record cannot fabricate rows.
+- Raw mode and the alternate screen are entered behind a restoration guard;
+  normal exit, an early quit, an error return, and an unwinding panic all
+  restore the cursor, screen, and mode.
+- The TUI needs a terminal on stdin and stdout. Redirected output exits `2`
+  with a message and writes no ANSI bytes, so pipelines must use `timeline`,
+  `search`, `analyze`, or the JSON commands.
+
+Exit codes: `0` normal exit, `1` the case could not be opened or the terminal
+failed, `2` stdin/stdout is not a terminal or the arguments are invalid.
+
+The TUI does not capture, import, export, or annotate: those stay explicit CLI
+or desktop actions. Mouse input is not required for any view.

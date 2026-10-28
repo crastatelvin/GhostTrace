@@ -128,6 +128,21 @@ pub enum Cli {
  a bound truncated the pass, and 2 means the rule parameters were invalid."
     )]
     Analyze(AnalyzeArgs),
+    /// Browse the timeline, search, event detail, and findings interactively.
+    #[command(
+        long_about = "Browse the timeline, search, event detail, and findings interactively.\n\nThe TUI reads through the same query and analysis contracts as `timeline`, `search`, and `analyze`, so a selection yields the same recorded event and detail. It needs a terminal on stdin and stdout; redirected output is refused so pipelines never receive ANSI control bytes. Evidence text is escaped before it reaches the terminal, and the raw/alternate screen is restored on exit, error, and panic paths. Press ? inside for the key list."
+    )]
+    Tui(TuiArgs),
+}
+
+#[derive(Args)]
+pub struct TuiArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Revision (parse run) to browse; defaults to the newest revision.
+    #[arg(long)]
+    pub revision: Option<String>,
 }
 
 #[derive(Args)]
@@ -564,6 +579,7 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Report(args) => report(args),
         Cli::Import(args) => import(args),
         Cli::Analyze(args) => analyze(args),
+        Cli::Tui(args) => crate::tui::run(&args.case, args.revision),
     }
 }
 
@@ -1299,7 +1315,7 @@ fn parse_window(text: &str) -> Result<i64, String> {
         .ok_or_else(|| format!("window `{text}` is too large"))
 }
 
-fn parse_instant(text: &str) -> Result<i64, String> {
+pub(crate) fn parse_instant(text: &str) -> Result<i64, String> {
     chrono::DateTime::parse_from_rfc3339(text)
         .map(|instant| instant.timestamp())
         .map_err(|_| {

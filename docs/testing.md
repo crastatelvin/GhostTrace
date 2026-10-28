@@ -13,6 +13,7 @@ UUIDs or wall-clock timestamps (plan Section 15).
 | SQLite integration | Transactional batches, migrations, idempotency, writer concurrency, recovery | `tests/case_storage.rs`, `migrations.rs`, `writer_concurrency.rs` |
 | CLI/subprocess contracts | Exit codes, JSON-safe output, progress on stderr, Ctrl-C handling | `tests/cli_*.rs` |
 | GUI accessible-tree tests | Controls reachable by accessible role/name; result supersession | `egui_kittest` (P6) |
+| TUI state/terminal safety | Key/action transitions, shared query identifiers, escaped control bytes, restoration on exit/error/unwind, no ANSI in pipes | `crates/ghosttrace-cli/tests/tui_actions.rs`, `terminal_safety.rs` (P7) |
 | Adversarial/fuzz | Oversize, truncation, hostile payloads, recovery from injected failures | `tests/hostile-inputs` fixtures, fuzz targets (P10) |
 | Platform traversal | no-follow containment, permissions, name encodings on each OS | platform test modules, run as an ordinary user |
 | Benchmarks | p95 query, ingest throughput, peak RSS on generated corpora | `cargo criterion` benches, `xtask` scale harness (P10) |

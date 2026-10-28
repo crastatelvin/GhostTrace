@@ -108,3 +108,19 @@ release packaging.
   this session, so it is built but not claimed as verified.
 - Desktop report export is unredacted until P9.2. The report screen states this
   before the export control.
+
+## P7 interactive terminal (2026-10-28)
+
+- `ghosttrace tui` was smoke-run on Linux x86_64 under a real pty
+  (`script -qec ... /dev/null`, input `q`): exit code 0, the alternate screen
+  was entered and left exactly once, and the cursor was hidden and shown
+  exactly once. A missing case exits 1 before the alternate screen is entered.
+- Terminal cleanup is unit-tested for a normal restore, an enter failure
+  (nothing to restore), and an unwinding panic. A quit through `q`/`Ctrl+C`
+  takes the same early-return path as a normal exit.
+- Redirected stdin/stdout is refused with exit code 2 and no ANSI bytes; the
+  plain CLI JSON output is asserted to contain no ESC bytes.
+- **Not verified on this host:** Windows Terminal and macOS terminals (no such
+  machines here). They remain P10 release-target smoke checks, not passes.
+- `0.3.0-beta.1` promotion still waits on the open accessibility and
+  release-target gate items recorded above; no tag was created by P7.
