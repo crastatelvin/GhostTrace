@@ -80,7 +80,10 @@ fn a_hanging_worker_is_killed_and_the_run_is_failed() {
 
 #[test]
 fn a_crashing_worker_leaves_a_failed_run_never_completed() {
-    let worker = fake_worker(env!("CARGO_PKG_VERSION"), "exit 1");
+    // Stay alive past the handshake so this exercises the crash path, not the
+    // separate "worker never started" path. The previous `exit 1` body raced
+    // the parent's Hello write and failed the release gate intermittently.
+    let worker = fake_worker(env!("CARGO_PKG_VERSION"), "sleep 3; exit 1");
     let (harness, outcome) = import_with(&worker, Duration::from_secs(10));
     let outcome = outcome.expect("a failed run is recorded");
     assert_eq!(outcome.state, "failed");
