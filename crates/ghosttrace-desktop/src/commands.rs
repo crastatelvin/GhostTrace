@@ -643,7 +643,12 @@ fn import(
             import: Arc::clone(&cancelled),
         },
     );
+    let worker = std::env::current_exe()
+        .ok()
+        .and_then(|exe| ghosttrace_core::worker::WorkerBinary::resolve_beside(&exe).ok());
     let mut request = ImportRequest::new(&cancelled);
+    request.worker = worker.map(|worker| worker.path().to_path_buf());
+    request.isolation_required = true;
     request.path = Some(object_path.to_string());
     request.format = format;
     request.syslog.timezone = syslog_timezone;

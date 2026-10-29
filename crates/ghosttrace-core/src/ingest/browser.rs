@@ -262,6 +262,7 @@ pub(crate) fn run(
             counts,
             diagnostics,
             cancelled,
+            failed: None,
             evidence,
             parser_id: kind.parser_id(),
             detected,

@@ -252,3 +252,32 @@ pub fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     value.push(suffix);
     PathBuf::from(value)
 }
+
+/// A fake worker script that completes the handshake, then runs `body`. The
+/// script speaks the frame format with `printf`; the body must not contain a
+/// single quote. Unix only: Windows has no `/bin/sh` in the test image.
+#[cfg(unix)]
+pub fn fake_worker(ready_version: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("ghosttrace-fake-worker-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).expect("fake worker dir");
+    let path = dir.join("fake-worker");
+    let ready = format!(r#"{{"type":"ready","protocol":1,"version":"{ready_version}"}}"#);
+    let script = format!("#!/bin/sh\n{}\n{body}\n", frame_printf(&ready));
+    std::fs::write(&path, script).expect("write fake worker");
+    let mut permissions = std::fs::metadata(&path).expect("stat").permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&path, permissions).expect("chmod");
+    path
+}
+
+/// `printf` invocation that writes one length-prefixed frame.
+#[cfg(unix)]
+pub fn frame_printf(body: &str) -> String {
+    let mut prefix = String::new();
+    for byte in (body.len() as u32).to_be_bytes() {
+        prefix.push_str(&format!("\\{byte:03o}"));
+    }
+    format!("printf '{prefix}%s' '{body}'")
+}

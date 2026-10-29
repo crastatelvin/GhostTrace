@@ -28,7 +28,7 @@ egui = "0.37.0"
 toml = "0.9.6"
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10.4"
-nix = { version = "0.30", default-features = false, features = ["fs", "user", "signal"] }
+nix = { version = "0.30", default-features = false, features = ["fs", "user", "signal", "process", "resource"] }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 evtx = { version = "0.13.0", default-features = false }
 crossterm = "0.29.0"

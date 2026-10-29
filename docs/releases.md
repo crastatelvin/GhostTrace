@@ -146,3 +146,28 @@ release packaging.
   named by a record is executed or fetched. A hostile payload string is asserted
   to survive verbatim in the raw observation.
 - Remaining P8 work (P8.2 parser worker isolation) is not started.
+
+## P8.2 isolated parser workers (2026-10-29)
+
+- EVTX and journal-export decoding runs in `ghosttrace worker --protocol 1`, a
+  private mode of the packaged CLI resolved beside the desktop binary (or
+  explicitly), never through `PATH`. A missing or mismatched build is refused
+  and recorded as a failed run.
+- Records cross a length-prefixed JSON protocol: 64 KiB control frames, 32 MiB
+  batch frames, 500 records per batch, strict job/sequence/count checks, and
+  per-record bounds on locators, JSON bodies, kinds, times, and diagnostics.
+  Raw `i128` times travel as exact decimal text because `serde_json` cannot
+  deserialize them.
+- The worker gets a cleared environment, a private `0700` copy of the object
+  (never a case path), and a null stderr. On Linux it also gets a new session,
+  `no_new_privs`, and `RLIMIT_AS`/`CPU`/`FSIZE`/`NOFILE`/`CORE` limits; the
+  parent kills it after 30 s without output or 30 min total, and on cancel.
+- Tests: `worker_protocol.rs` (framing, validation, handshake/path refusals),
+  `worker_crash.rs` (hang, crash, garbage, oversize frame, foreign job, build
+  mismatch, cancellation), and `worker_limits.rs` (worker vs in-process output
+  equality on the tracked EVTX fixture, record and record-size limits).
+- **Not claimed:** no network namespace/seccomp, no filesystem namespace, no
+  rlimits on macOS/Windows, and the browser adapter still runs in-process.
+  These are recorded in `docs/worker-protocol.md` instead of being implied.
+- `0.3.0-beta.1` promotion still waits on the open accessibility and
+  release-target gate items; no tag was created by P8.2.

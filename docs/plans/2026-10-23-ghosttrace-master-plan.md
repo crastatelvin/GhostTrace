@@ -1070,11 +1070,48 @@ the open accessibility/release-target items recorded in `docs/releases.md`.
 
 **Consumes:** Browser/EVTX/journal adapters. **Produces:** Worker subprocess execution for risky inputs with validated limits/status.
 
-- [ ] Test crash, hang, invalid/oversize IPC, progress spoofing, unsupported protocol, cancellation, and resource-exhaustion input.
-- [ ] Implement read-only staged input access, bounded length-prefixed messages, validated batch IDs/records, timeout/kill, and no inherited secrets. Package/resolve the trusted CLI worker beside the desktop and reject missing or mismatched builds; never search PATH.
-- [ ] Add tested OS-specific restrictions; disclose limitations where equivalent filesystem/network/process sandboxing is unavailable.
-- [ ] Re-run adapter contract suites through worker path and compare outputs to the trusted synthetic baseline.
-- [ ] Commit: `security: isolate artifact parsers and bound worker resources`.
+- [x] Test crash, hang, invalid/oversize IPC, progress spoofing, unsupported protocol, cancellation, and resource-exhaustion input.
+  `worker_crash.rs` starts fake workers that complete the handshake and then
+  sleep (killed by the 1 s no-progress deadline, run `failed`/`worker_timeout`),
+  exit (`worker_crashed`), write invalid JSON (`worker_protocol`), emit a 2 GiB
+  length prefix (`worker_protocol`, refused before allocation), name another
+  job (`worker_protocol`), present another build (`Unsupported`, run `failed`),
+  or run while cancelled (`cancelled`, records 0). `worker_protocol.rs` covers
+  zero/oversize/truncated frames, unknown message types, foreign handshakes,
+  and every record bound (locator kind/control bytes, raw JSON shape, mapped
+  object, event kind charset, time/candidate/assumption counts, `i128` text,
+  empty records, unknown fields). `worker_limits.rs` covers record and
+  record-size exhaustion through the real worker.
+- [x] Implement read-only staged input access, bounded length-prefixed messages, validated batch IDs/records, timeout/kill, and no inherited secrets. Package/resolve the trusted CLI worker beside the desktop and reject missing or mismatched builds; never search PATH.
+  `worker/protocol.rs` defines the 4-byte big-endian length frames (64 KiB
+  control, 32 MiB batch, 500 records/batch), the versioned messages, and the
+  parent-side record validation. `worker/mod.rs` resolves the sibling
+  `ghosttrace` (or an explicit `--worker`), spawns with `env_clear`, a private
+  working directory, piped stdin/stdout and null stderr, and checks protocol +
+  exact build version in the handshake. `ingest/isolated.rs` stages a `0700`
+  copy of the object (the worker never sees a case path), enforces monotonic
+  batch sequence numbers and exact count reconciliation, kills on a 30 s
+  no-progress deadline, a 30 min job budget, or cancellation, and records
+  `failed` with `worker_start_failed`/`worker_timeout`/`worker_crashed`/
+  `worker_protocol`/`worker_error` instead of ever claiming completion.
+  `xtask package` already ships both binaries in `bin/`, so the desktop's
+  sibling lookup is satisfied by a release package.
+- [x] Add tested OS-specific restrictions; disclose limitations where equivalent filesystem/network/process sandboxing is unavailable.
+  On Linux the child gets `setsid` (group kill), `PR_SET_NO_NEW_PRIVS`, and
+  `RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 600 s, `RLIMIT_FSIZE` 1 GiB,
+  `RLIMIT_NOFILE` 128, `RLIMIT_CORE` 0, applied in `pre_exec` and exercised by
+  every worker test. `docs/worker-protocol.md` states what is **not** provided:
+  no network namespace or seccomp filter, no filesystem namespace, no rlimits
+  on macOS/Windows, and the browser adapter still in-process with its own
+  documented bounds.
+- [x] Re-run adapter contract suites through worker path and compare outputs to the trusted synthetic baseline.
+  `crates/ghosttrace-cli/tests/worker_limits.rs` imports the tracked Sysmon
+  fixture twice (worker default and `--no-worker`) and asserts equal state,
+  records, observations, events, diagnostics total and codes, parser id, and
+  detected format; the same comparison is repeated with `--max-records 5` and
+  `--max-record-bytes 64`. The existing EVTX and journal CLI suites now run
+  through the worker by default, so their assertions are the contract.
+- [x] Commit: `security: isolate artifact parsers and bound worker resources`.
 
 **Gate:** One malformed artifact cannot crash the GUI/writer, produce a completed run, or hang indefinitely; worker restrictions are verified rather than assumed.
 
@@ -1204,7 +1241,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P6 | P6.4 | Desktop reports/accessibility | [x] |
 | P7 | P7 | TUI and terminal safety | [x] |
 | P8 | P8.1 | EVTX adapters | [x] |
-| P8 | P8.2 | Isolated parser workers | [ ] |
+| P8 | P8.2 | Isolated parser workers | [x] |
 | P9 | P9.1 | Signatures/standard private keys/trust | [ ] |
 | P9 | P9.2 | Redacted packages/backup/restore | [ ] |
 | P10 | P10.1 | Fuzz/recovery/platform safety | [ ] |
@@ -1214,6 +1251,22 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P12 | P12 | Optional read-only local API | [ ] |
 
 For each completed task, append: `Issue: real URL; PR: real URL; commit: actual SHA; verified: command(s), OS, result; reviewer: name; date: actual completion date`. Keep generated benchmark evidence and significant limitation decisions linked from the task. Use GitHub milestones for release gates and labels `area:capture`, `area:ingest`, `area:storage`, `area:gui`, `area:analysis`, `area:integrity`, `area:docs`, `type:bug`, `type:security`, `status:blocked`, `good-first-issue`, and `help-wanted`.
+
+### P8.2 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-29).
+- Worker tests: 12 protocol/validation tests (`worker_protocol.rs`), 7
+  crash/hang/oversize/cancel tests (`worker_crash.rs`, Unix fake workers), and
+  3 worker-vs-in-process contract tests (`worker_limits.rs`). The tracked
+  Sysmon fixture yields 358 records and 8 chunk diagnostics in both paths.
+- CLI smoke on Linux: `case create` → `scan` → `import sysmon.evtx` through the
+  worker (exit 3, `partial`, 358 records, identical JSON to `--no-worker`).
+- Limits verified by test, not assumption: 1 s no-progress kill, 2 GiB length
+  prefix refused, foreign build refused, cancelled job killed with records 0.
+- Open: browser adapter isolation, network/seccomp/filesystem sandboxing, and
+  macOS/Windows resource limits are recorded in `docs/worker-protocol.md`.
 
 ### P8.1 verification record
 

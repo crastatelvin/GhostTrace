@@ -309,6 +309,14 @@ object directly. Exactly one is required. `--acquisition` selects a capture
 detected and declared formats are reported. Native `.journal` files are not
 parsed: capture a `journalctl -o export` stream first.
 
+Risky adapters (EVTX and journal export) run in an isolated parser worker: this
+executable in a private mode, resolved explicitly and never through `PATH`. The
+worker gets a private copy of the object and returns bounded, validated frames;
+a crash, hang, or malformed output ends the run `failed`, never `completed`.
+`--worker <PATH>` names another worker binary; `--no-worker` runs the adapter
+in-process for debugging and gives up the isolation. The contract and its
+limits are in [worker-protocol.md](worker-protocol.md).
+
 For browser history, `--path` names the captured main SQLite database; captured
 `<path>-wal` and `<path>-shm` sidecars in the same acquisition are found
 automatically. The schema chooses `browser.chromium` or `browser.firefox`.

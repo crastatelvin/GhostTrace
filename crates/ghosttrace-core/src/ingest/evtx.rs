@@ -40,7 +40,7 @@ use crate::domain::time::{
 };
 use crate::error::{CoreError, CoreResult};
 
-use super::{Committer, EventDraft, ImportDiagnostic, ImportRequest, ParsedRecord, truncate_text};
+use super::{EventDraft, ImportDiagnostic, ImportRequest, ParsedRecord, RecordSink, truncate_text};
 
 /// Every EVTX chunk is 64 KiB, including the last one in a complete file.
 const CHUNK_SIZE: u64 = 65_536;
@@ -59,7 +59,7 @@ const GENERIC_KIND: &str = "windows.event_log";
 /// never a completed run. Records the decoder cannot read become diagnostics
 /// with the most precise locator it exposes (chunk or record id).
 pub(super) fn import(
-    committer: &mut Committer<'_>,
+    sink: &mut dyn RecordSink,
     path: &Path,
     request: &ImportRequest<'_>,
     cancelled: &mut bool,
@@ -87,24 +87,24 @@ pub(super) fn import(
     // chunks it can read.
     let header_block = u64::from(header.header_block_size).max(HEADER_BLOCK);
     if actual < header_block {
-        committer.diagnostics.push(
+        sink.diagnostic(
             "truncated_evidence",
             "evtx-file",
             &format!(
                 "file is {actual} bytes, shorter than the {header_block} byte EVTX header block; no record can be read"
             ),
-        );
+        )?;
         return Ok(());
     }
     let chunk_area = actual - header_block;
     if chunk_area % CHUNK_SIZE != 0 {
-        committer.diagnostics.push(
+        sink.diagnostic(
             "truncated_evidence",
             "evtx-file",
             &format!(
                 "file is {actual} bytes; its {chunk_area} byte chunk area is not a whole number of {CHUNK_SIZE} byte chunks, so the trailing chunk is truncated; readable records are imported and the run is partial"
             ),
-        );
+        )?;
     }
 
     let mut parser = evtx::EvtxParser::from_path(path).map_err(|error| {
@@ -114,20 +114,21 @@ pub(super) fn import(
     })?;
     let records = parser.records_json_value();
     let mut ordinal = 0_u64;
+    let mut seen = 0_u64;
     for item in records {
         if request.cancelled.load(Ordering::Relaxed) {
             *cancelled = true;
             break;
         }
-        if committer.counts.records >= request.max_records {
-            committer.diagnostics.push(
+        if seen >= request.max_records {
+            sink.diagnostic(
                 "record_limit",
                 "evtx-file",
                 &format!(
                     "import stopped at the configured limit of {} records",
                     request.max_records
                 ),
-            );
+            )?;
             break;
         }
         match item {
@@ -142,14 +143,13 @@ pub(super) fn import(
                     record.recovered,
                     request.max_record_bytes,
                 );
-                committer.counts.records += 1;
-                committer.commit(parsed)?;
+                seen += 1;
+                sink.record(parsed)?;
+                sink.progress(seen)?;
             }
             Err(error) => {
                 let (locator, detail) = describe_error(&error);
-                committer
-                    .diagnostics
-                    .push("evtx_parse_error", &locator, &detail);
+                sink.diagnostic("evtx_parse_error", &locator, &detail)?;
             }
         }
     }

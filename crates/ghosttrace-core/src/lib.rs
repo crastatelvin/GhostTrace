@@ -26,6 +26,7 @@ pub mod service;
 pub mod sqlite_report;
 pub mod storage;
 pub mod text;
+pub mod worker;
 
 pub use domain::*;
 pub use error::{CoreError, CoreResult};

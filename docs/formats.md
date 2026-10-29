@@ -261,7 +261,9 @@ required column names rather than parsed on a best-effort basis.
 ## Windows event logs (EVTX)
 
 A captured `.evtx` file is detected by its `ElfFile\0` signature, or declared
-with `--format evtx`. The container and BinXml are decoded by `evtx` 0.13.0;
+with `--format evtx`. It is parsed in the isolated worker (see
+[worker-protocol.md](worker-protocol.md)); the mapping below is the same in
+both paths. The container and BinXml are decoded by `evtx` 0.13.0;
 the adapter preserves the structured `System` and `EventData`/`UserData`
 fields. Provider message resources are never loaded, so a missing message table
 cannot change an event's meaning. The decoder does not resolve DTDs or external

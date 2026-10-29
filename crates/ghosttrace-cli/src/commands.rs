@@ -128,11 +128,21 @@ pub enum Cli {
  a bound truncated the pass, and 2 means the rule parameters were invalid."
     )]
     Analyze(AnalyzeArgs),
+    /// Internal: serve one isolated parse job over stdin/stdout.
+    #[command(hide = true)]
+    Worker(WorkerArgs),
     /// Browse the timeline, search, event detail, and findings interactively.
     #[command(
         long_about = "Browse the timeline, search, event detail, and findings interactively.\n\nThe TUI reads through the same query and analysis contracts as `timeline`, `search`, and `analyze`, so a selection yields the same recorded event and detail. It needs a terminal on stdin and stdout; redirected output is refused so pipelines never receive ANSI control bytes. Evidence text is escaped before it reaches the terminal, and the raw/alternate screen is restored on exit, error, and panic paths. Press ? inside for the key list."
     )]
     Tui(TuiArgs),
+}
+
+#[derive(Args)]
+pub struct WorkerArgs {
+    /// Protocol version the parent speaks.
+    #[arg(long)]
+    pub protocol: u32,
 }
 
 #[derive(Args)]
@@ -357,6 +367,13 @@ pub struct ImportArgs {
     /// exports come from an explicit `journalctl -o export` acquisition.
     #[arg(long, value_enum)]
     pub format: Option<FormatArg>,
+    /// Parser worker binary for risky adapters (default: this executable).
+    /// The worker is never searched for on PATH.
+    #[arg(long)]
+    pub worker: Option<PathBuf>,
+    /// Run risky adapters in this process (debugging only; no isolation).
+    #[arg(long)]
+    pub no_worker: bool,
     /// JSONL: field holding the record time.
     #[arg(long, default_value = "ts")]
     pub time_field: String,
@@ -582,8 +599,25 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Report(args) => report(args),
         Cli::Import(args) => import(args),
         Cli::Analyze(args) => analyze(args),
+        Cli::Worker(args) => worker(args),
         Cli::Tui(args) => crate::tui::run(&args.case, args.revision),
     }
+}
+
+/// Worker mode: no case, no output but protocol frames. The parent validates
+/// everything this process says, so a compromise here cannot reach the case.
+fn worker(args: WorkerArgs) -> u8 {
+    let expected = ghosttrace_core::worker::protocol::PROTOCOL_VERSION;
+    if args.protocol != expected {
+        eprintln!(
+            "worker protocol {expected} expected, {0} requested",
+            args.protocol
+        );
+        return EXIT_USAGE;
+    }
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    ghosttrace_core::worker::protocol::serve(stdin.lock(), stdout.lock())
 }
 
 fn analyze(args: AnalyzeArgs) -> u8 {
@@ -662,6 +696,24 @@ fn import(args: ImportArgs) -> u8 {
         output::emit_error("invalid_request", "--max-records must be at least 1");
         return EXIT_USAGE;
     }
+    let worker_path = match (&args.worker, args.no_worker) {
+        (Some(_), true) => {
+            output::emit_error("invalid_request", "pass either --worker or --no-worker");
+            return EXIT_USAGE;
+        }
+        (Some(path), false) => Some(path.clone()),
+        (None, false) => match std::env::current_exe() {
+            Ok(path) => Some(path),
+            Err(error) => {
+                output::emit_error(
+                    "invalid_request",
+                    &format!("cannot locate the parser worker beside this executable: {error}"),
+                );
+                return EXIT_USAGE;
+            }
+        },
+        (None, true) => None,
+    };
     let request = ImportRequest {
         path: args.path,
         evidence_id: args.object,
@@ -681,7 +733,9 @@ fn import(args: ImportArgs) -> u8 {
         },
         max_record_bytes: args.max_record_bytes,
         max_records: args.max_records,
-        cancelled: &INTERRUPTED,
+        worker: worker_path.clone(),
+        isolation_required: !args.no_worker,
+        ..ImportRequest::new(&INTERRUPTED)
     };
     install_interrupt_handler();
     let outcome = ingest::run_import(&reader, session.writer(), session.layout().root(), &request);
@@ -701,6 +755,11 @@ fn import(args: ImportArgs) -> u8 {
             }
             if outcome.state == "cancelled" {
                 eprintln!("import cancelled: the run is recorded as cancelled");
+            }
+            if outcome.state == "failed" {
+                eprintln!("import failed: the run is recorded as failed, never completed");
+                output::emit_json(&outcome);
+                return EXIT_FAILED;
             }
             let code = if outcome.state == "completed" {
                 EXIT_OK

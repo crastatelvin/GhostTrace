@@ -164,6 +164,22 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P8.2 (2026-10-29): isolated parser workers — EVTX and journal-export
+  decoding runs in a private-mode subprocess (`ghosttrace worker --protocol 1`)
+  resolved beside the application, never through `PATH`. The worker gets a
+  `0700` copy of the object (never a case path), a cleared environment, and, on
+  Linux, a new session, `no_new_privs`, and `RLIMIT_AS`/`CPU`/`FSIZE`/`NOFILE`/
+  `CORE` bounds. Records cross a length-prefixed JSON protocol with control and
+  batch frame bounds, a 500-record batch cap, monotonic sequence numbers, exact
+  count reconciliation, and per-field validation; a crash, hang, bad frame, or
+  lying worker records the run `failed` (with `worker_timeout`,
+  `worker_crashed`, `worker_protocol`, `worker_error`, or `worker_start_failed`)
+  and can never produce `completed`. A 30-second no-progress deadline and a
+  30-minute job budget bound every job; cancellation kills the worker. The
+  worker path is tested against the in-process baseline on the tracked EVTX
+  fixture, including `--max-records` and `--max-record-bytes`. The browser
+  adapter remains in-process and the missing network/filesystem sandbox is
+  documented rather than assumed (`docs/worker-protocol.md`).
 - P8.1 (2026-10-28): structured EVTX ingestion — captured Windows event logs
   are detected by their `ElfFile\0` signature or declared with
   `--format evtx`; structured `System`/`EventData` fields are preserved and each

@@ -14,15 +14,17 @@
 
 pub mod browser;
 pub mod evtx;
+mod isolated;
 pub mod journal;
 pub mod jsonl;
 pub mod syslog;
 
 use std::io::{BufRead, BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::domain::event::{Event, NamedEventTimeRef};
@@ -163,6 +165,12 @@ impl LogFormat {
             LogFormat::Browser => "browser.package",
             LogFormat::Evtx => "evtx.records",
         }
+    }
+
+    /// Adapters that decode attacker-controlled binary containers run in the
+    /// isolated worker by default (plan P8.2).
+    pub fn runs_isolated(self) -> bool {
+        matches!(self, LogFormat::Evtx | LogFormat::JournalExport)
     }
 
     pub fn from_id(text: &str) -> Option<Self> {
@@ -312,6 +320,16 @@ pub struct ImportRequest<'a> {
     pub syslog: SyslogConfig,
     pub max_record_bytes: usize,
     pub max_records: u64,
+    /// Explicit parser worker binary. Risky adapters run isolated when set;
+    /// `None` runs them in-process (tests and the worker itself).
+    pub worker: Option<PathBuf>,
+    /// Refuse to run a risky adapter in-process when no worker is configured.
+    /// Product builds set this; tests and the worker itself leave it off.
+    pub isolation_required: bool,
+    /// Kill the worker when it produces no frame for this long.
+    pub worker_timeout: Duration,
+    /// Hard budget for one worker job.
+    pub worker_job_timeout: Duration,
     pub cancelled: &'a AtomicBool,
 }
 
@@ -326,12 +344,16 @@ impl<'a> ImportRequest<'a> {
             syslog: SyslogConfig::default(),
             max_record_bytes: DEFAULT_MAX_RECORD_BYTES,
             max_records: DEFAULT_MAX_RECORDS,
+            worker: None,
+            isolation_required: false,
+            worker_timeout: Duration::from_secs(30),
+            worker_job_timeout: Duration::from_secs(1800),
             cancelled,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportDiagnostic {
     /// Stable machine code; never carries record content.
     pub code: String,
@@ -518,6 +540,50 @@ pub fn run_import(
     case_root: &Path,
     request: &ImportRequest<'_>,
 ) -> CoreResult<ImportOutcome> {
+    let plan = plan_import(reader, case_root, request)?;
+    if plan.format == LogFormat::Browser {
+        // The browser adapter validates its package before it creates a run,
+        // so a rejected package leaves no row behind.
+        return browser::run(
+            reader,
+            writer,
+            case_root,
+            request,
+            &plan.evidence,
+            plan.detected,
+        );
+    }
+    let isolated = plan.format.runs_isolated();
+    if isolated && request.worker.is_none() && request.isolation_required {
+        return Err(CoreError::Unsupported(
+            "the parser worker is missing beside the application; risky adapters are \
+             never parsed in-process. Reinstall or rebuild the pair."
+                .to_string(),
+        ));
+    }
+    writer.queue_parse_run(&plan.run)?;
+    if isolated && let Some(worker) = request.worker.as_deref() {
+        return isolated::run(writer, request, plan, worker);
+    }
+    run_in_process(writer, request, plan)
+}
+
+/// Everything decided before a record is read: the resolved object, the chosen
+/// format, and the run row. Both the in-process and isolated paths start from
+/// this so their provenance is identical; the caller queues the row.
+pub(crate) struct ImportPlan {
+    pub evidence: EvidenceRef,
+    pub store_path: PathBuf,
+    pub detected: Option<LogFormat>,
+    pub format: LogFormat,
+    pub run: ParseRunRecord,
+}
+
+fn plan_import(
+    reader: &CaseReader,
+    case_root: &Path,
+    request: &ImportRequest<'_>,
+) -> CoreResult<ImportPlan> {
     let evidence = resolve_evidence(
         reader,
         request.acquisition_id.as_deref(),
@@ -537,9 +603,6 @@ pub fn run_import(
             evidence.native_path
         ))
     })?;
-    if format == LogFormat::Browser {
-        return browser::run(reader, writer, case_root, request, &evidence, detected);
-    }
     if matches!(format, LogFormat::Syslog5424 | LogFormat::Syslog3164) {
         syslog::validate(&request.syslog)?;
     }
@@ -556,25 +619,42 @@ pub fn run_import(
         &sha256_hex(&sha256_bytes(identity.as_bytes()))[..16]
     );
 
-    let mut counts = Counts::default();
-    let mut diagnostics = Diagnostics::default();
-    let mut run = ParseRunRecord {
+    let run = ParseRunRecord {
         id: run_id.clone(),
         acquisition_id: evidence.acquisition_id.clone(),
         parser_id: format.parser_id().to_string(),
         parser_version: ADAPTER_VERSION.to_string(),
         config_digest,
         state: "running".to_string(),
-        counts_json: counts.to_json(),
+        counts_json: Counts::default().to_json(),
         diagnostics_json: "[]".to_string(),
         assumptions_json: recorded_assumptions(format, request)?,
     };
-    writer.queue_parse_run(&run)?;
+    Ok(ImportPlan {
+        evidence,
+        store_path,
+        detected,
+        format,
+        run,
+    })
+}
 
-    let file = std::fs::File::open(&store_path)
-        .map_err(|error| CoreError::Storage(format!("open captured object: {error}")))?;
-    let mut records = BufReader::new(file);
+fn run_in_process(
+    writer: &CaseWriter,
+    request: &ImportRequest<'_>,
+    plan: ImportPlan,
+) -> CoreResult<ImportOutcome> {
+    let ImportPlan {
+        evidence,
+        store_path,
+        detected,
+        format,
+        mut run,
+    } = plan;
+    let mut counts = Counts::default();
+    let mut diagnostics = Diagnostics::default();
     let mut cancelled = false;
+    let run_id = run.id.clone();
     {
         let mut committer = Committer {
             writer,
@@ -586,103 +666,7 @@ pub fn run_import(
             pending_observations: Vec::new(),
             pending_events: Vec::new(),
         };
-        match format {
-            LogFormat::Evtx => {
-                evtx::import(&mut committer, &store_path, request, &mut cancelled)?;
-            }
-            LogFormat::JournalExport => {
-                let mut reader = journal::Reader::new(&mut records, request.max_record_bytes);
-                loop {
-                    if request.cancelled.load(Ordering::Relaxed) {
-                        cancelled = true;
-                        break;
-                    }
-                    if committer.counts.records >= request.max_records {
-                        committer.diagnostics.push(
-                            "record_limit",
-                            &format!("offset:{}", reader.offset()),
-                            &format!(
-                                "import stopped at the configured limit of {} entries",
-                                request.max_records
-                            ),
-                        );
-                        break;
-                    }
-                    let Some(parsed) = reader.next()? else {
-                        break;
-                    };
-                    committer.counts.records += 1;
-                    committer.commit(parsed)?;
-                }
-            }
-            _ => {
-                let mut syslog = syslog::Adapter::new(&request.syslog)?;
-                let mut offset = 0_u64;
-                let mut line_number = 0_u64;
-                loop {
-                    if request.cancelled.load(Ordering::Relaxed) {
-                        cancelled = true;
-                        break;
-                    }
-                    if committer.counts.records >= request.max_records {
-                        committer.diagnostics.push(
-                            "record_limit",
-                            &format!("offset:{offset}"),
-                            &format!(
-                                "import stopped at the configured limit of {} records",
-                                request.max_records
-                            ),
-                        );
-                        break;
-                    }
-                    let Some(line) =
-                        read_record(&mut records, &mut offset, request.max_record_bytes)?
-                    else {
-                        break;
-                    };
-                    line_number += 1;
-                    committer.counts.records += 1;
-                    let locator = format!(
-                        "line:{line_number}:offset:{}:len:{}",
-                        line.offset, line.length
-                    );
-                    if line.truncated {
-                        committer.diagnostics.push(
-                            "record_too_large",
-                            &locator,
-                            &format!(
-                                "record exceeds the configured {} byte limit; not parsed",
-                                request.max_record_bytes
-                            ),
-                        );
-                        continue;
-                    }
-                    let text = match std::str::from_utf8(&line.bytes) {
-                        Ok(text) => text,
-                        Err(error) => {
-                            committer.diagnostics.push(
-                                "invalid_encoding",
-                                &locator,
-                                &format!(
-                                    "record is not UTF-8 (valid prefix {} bytes)",
-                                    error.valid_up_to()
-                                ),
-                            );
-                            continue;
-                        }
-                    };
-                    let parsed = match format {
-                        LogFormat::Jsonl => jsonl::parse_line(text, &locator, &request.jsonl),
-                        LogFormat::Syslog5424 => syslog.parse_line(text, &locator, true),
-                        LogFormat::Syslog3164 => syslog.parse_line(text, &locator, false),
-                        LogFormat::JournalExport | LogFormat::Browser | LogFormat::Evtx => {
-                            unreachable!("handled above")
-                        }
-                    };
-                    committer.commit(parsed)?;
-                }
-            }
-        }
+        produce_records(format, &store_path, request, &mut cancelled, &mut committer)?;
         committer.flush()?;
     }
 
@@ -693,6 +677,7 @@ pub fn run_import(
             counts,
             diagnostics,
             cancelled,
+            failed: None,
             evidence: &evidence,
             parser_id: format.parser_id(),
             detected,
@@ -701,12 +686,134 @@ pub fn run_import(
     )
 }
 
+/// Run one adapter over a captured object, emitting records to `sink`.
+///
+/// This is the only parse loop: the in-process import and the isolated worker
+/// both call it, so the worker path is the same code with a different sink.
+pub(crate) fn produce_records(
+    format: LogFormat,
+    store_path: &Path,
+    request: &ImportRequest<'_>,
+    cancelled: &mut bool,
+    sink: &mut dyn RecordSink,
+) -> CoreResult<()> {
+    let file = std::fs::File::open(store_path)
+        .map_err(|error| CoreError::Storage(format!("open captured object: {error}")))?;
+    let mut records = BufReader::new(file);
+    let mut seen = 0_u64;
+    match format {
+        LogFormat::Evtx => {
+            evtx::import(sink, store_path, request, cancelled)?;
+        }
+        LogFormat::JournalExport => {
+            let mut reader = journal::Reader::new(&mut records, request.max_record_bytes);
+            loop {
+                if request.cancelled.load(Ordering::Relaxed) {
+                    *cancelled = true;
+                    break;
+                }
+                if seen >= request.max_records {
+                    sink.diagnostic(
+                        "record_limit",
+                        &format!("offset:{}", reader.offset()),
+                        &format!(
+                            "import stopped at the configured limit of {} entries",
+                            request.max_records
+                        ),
+                    )?;
+                    break;
+                }
+                let Some(parsed) = reader.next()? else {
+                    break;
+                };
+                seen += 1;
+                sink.record(parsed)?;
+                sink.progress(seen)?;
+            }
+        }
+        LogFormat::Browser => {
+            unreachable!("the browser adapter runs before the record loop")
+        }
+        _ => {
+            let mut syslog = syslog::Adapter::new(&request.syslog)?;
+            let mut offset = 0_u64;
+            let mut line_number = 0_u64;
+            loop {
+                if request.cancelled.load(Ordering::Relaxed) {
+                    *cancelled = true;
+                    break;
+                }
+                if seen >= request.max_records {
+                    sink.diagnostic(
+                        "record_limit",
+                        &format!("offset:{offset}"),
+                        &format!(
+                            "import stopped at the configured limit of {} records",
+                            request.max_records
+                        ),
+                    )?;
+                    break;
+                }
+                let Some(line) = read_record(&mut records, &mut offset, request.max_record_bytes)?
+                else {
+                    break;
+                };
+                line_number += 1;
+                seen += 1;
+                let locator = format!(
+                    "line:{line_number}:offset:{}:len:{}",
+                    line.offset, line.length
+                );
+                if line.truncated {
+                    sink.record(ParsedRecord::with_diagnostic(
+                        &locator,
+                        "record_too_large",
+                        format!(
+                            "record exceeds the configured {} byte limit; not parsed",
+                            request.max_record_bytes
+                        ),
+                    ))?;
+                    continue;
+                }
+                let text = match std::str::from_utf8(&line.bytes) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        sink.record(ParsedRecord::with_diagnostic(
+                            &locator,
+                            "invalid_encoding",
+                            format!(
+                                "record is not UTF-8 (valid prefix {} bytes)",
+                                error.valid_up_to()
+                            ),
+                        ))?;
+                        continue;
+                    }
+                };
+                let parsed = match format {
+                    LogFormat::Jsonl => jsonl::parse_line(text, &locator, &request.jsonl),
+                    LogFormat::Syslog5424 => syslog.parse_line(text, &locator, true),
+                    LogFormat::Syslog3164 => syslog.parse_line(text, &locator, false),
+                    LogFormat::JournalExport | LogFormat::Browser | LogFormat::Evtx => {
+                        unreachable!("handled above")
+                    }
+                };
+                sink.record(parsed)?;
+                sink.progress(seen)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Everything a parse run accumulated once reading is over.
 pub(crate) struct RunSummary<'a> {
     pub run: ParseRunRecord,
     pub counts: Counts,
     pub diagnostics: Diagnostics,
     pub cancelled: bool,
+    /// Stable reason the parse did not finish (worker crash, timeout, protocol
+    /// violation). Recorded as `failed` rather than being rounded to partial.
+    pub failed: Option<&'a str>,
     pub evidence: &'a EvidenceRef,
     pub parser_id: &'a str,
     pub detected: Option<LogFormat>,
@@ -724,6 +831,7 @@ pub(crate) fn finalize_run(
         counts,
         diagnostics,
         cancelled,
+        failed,
         evidence,
         parser_id,
         detected,
@@ -732,6 +840,8 @@ pub(crate) fn finalize_run(
     let (entries, total, truncated) = diagnostics.finish();
     run.state = if cancelled {
         "cancelled".to_string()
+    } else if failed.is_some() {
+        "failed".to_string()
     } else if total > 0 {
         "partial".to_string()
     } else {
@@ -827,6 +937,7 @@ pub(crate) struct ParsedRecord {
     pub diagnostics: Vec<ImportDiagnostic>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct EventDraft {
     pub kind: String,
     pub summary: String,
@@ -859,6 +970,18 @@ impl ParsedRecord {
     }
 }
 
+/// Where an adapter sends what it parsed. The in-process import commits to the
+/// case; the isolated worker serializes to bounded IPC frames. Both paths run
+/// the same adapter loops, so a worker test compares like with like.
+pub(crate) trait RecordSink {
+    fn record(&mut self, record: ParsedRecord) -> CoreResult<()>;
+    fn diagnostic(&mut self, code: &str, locator: &str, detail: &str) -> CoreResult<()>;
+    /// Records seen so far; the worker forwards it as a progress frame.
+    fn progress(&mut self, _records: u64) -> CoreResult<()> {
+        Ok(())
+    }
+}
+
 /// Commits parsed records in bounded batches and keeps the run row current.
 struct Committer<'a> {
     writer: &'a CaseWriter,
@@ -869,6 +992,18 @@ struct Committer<'a> {
     diagnostics: &'a mut Diagnostics,
     pending_observations: Vec<ObservationRecord>,
     pending_events: Vec<Event>,
+}
+
+impl RecordSink for Committer<'_> {
+    fn record(&mut self, parsed: ParsedRecord) -> CoreResult<()> {
+        self.counts.records += 1;
+        self.commit(parsed)
+    }
+
+    fn diagnostic(&mut self, code: &str, locator: &str, detail: &str) -> CoreResult<()> {
+        self.diagnostics.push(code, locator, detail);
+        Ok(())
+    }
 }
 
 impl Committer<'_> {
