@@ -172,13 +172,16 @@ fn ctrl_c_cancels_the_scan_and_exits_3() {
     let dir = tempfile::tempdir().unwrap();
     let evidence = dir.path().join("evidence");
     std::fs::create_dir_all(&evidence).unwrap();
-    // 16 MiB of hash work gives the interrupt a deterministic window.
+    // Enough hash/copy work to leave a window, and a start marker so the
+    // signal is not sent before the handler exists or after the scan finished.
     let big = std::fs::File::create(evidence.join("big.bin")).unwrap();
-    big.set_len(16 * 1024 * 1024).unwrap();
+    big.set_len(64 * 1024 * 1024).unwrap();
     drop(big);
     let case = create_case(dir.path());
 
-    let child = Command::new(bin())
+    let stderr_path = dir.path().join("scan.stderr");
+    let stderr_file = std::fs::File::create(&stderr_path).unwrap();
+    let mut child = Command::new(bin())
         .args([
             "scan",
             "--case",
@@ -187,20 +190,34 @@ fn ctrl_c_cancels_the_scan_and_exits_3() {
             evidence.to_str().unwrap(),
         ])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::from(stderr_file))
         .spawn()
         .unwrap();
-    std::thread::sleep(Duration::from_millis(300));
+    let started = std::time::Instant::now();
+    loop {
+        let text = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+        if text.contains("source method") {
+            break;
+        }
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the scan never started: {text}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
     kill(Pid::from_raw(child.id() as i32), Signal::SIGINT).unwrap();
     let output = child.wait_with_output().unwrap();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap();
 
-    assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
+    assert_eq!(output.status.code(), Some(3), "{stderr}");
     let parsed: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
     assert_eq!(parsed["state"], "cancelled");
     assert!(
-        stderr(&output).contains("interrupt received"),
-        "the cancellation is explained: {}",
-        stderr(&output)
+        stderr.contains("interrupt received"),
+        "the cancellation is explained: {stderr}"
     );
     // Nothing half-published: no staging leftovers, no orphan objects.
     assert_eq!(std::fs::read_dir(case.join("staging")).unwrap().count(), 0);
