@@ -1415,13 +1415,31 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
   permissions, and gives only the publish job `contents: write`. It runs the
   full check battery, builds, packages, creates a source archive and
   `SHA256SUMS`, smoke-runs the extracted archive, uploads assets, attests build
-  provenance, and creates a draft prerelease. `docs/releases.md` documents
-  checksum/SBOM/attestation verification and an offline `cargo vendor` build
-  from the source archive.
-- Open: the workflow's GitHub run, Windows/macOS builds and terminal smoke
-  checks, live NVDA/VoiceOver/Orca sessions, the 10 GiB capture corpus, the
-  unverified `wgpu` renderer, and CLI annotations. `1.0.0` is not tagged; the
-  candidate notes record these instead of claiming support.
+  provenance when the repository supports it, and creates a draft prerelease.
+  `docs/releases.md` documents checksum/SBOM/attestation verification and an
+  offline `cargo vendor` build from the source archive.
+- Tag `v1.0.0-rc.1` workflow run
+  `https://github.com/crastatelvin/GhostTrace/actions/runs/40861832751` passes
+  both jobs and creates a **draft** prerelease. Downloaded assets verify:
+  `SHA256SUMS` passes, the binary archive is
+  `5f43f635bc81dcf545b606542b360a0d1007ca5ab053365bdfd465ed60b4494b`,
+  the source archive is
+  `0fb59b9552e0fc718b4df41c3da9d42428b689cdfa964d2bc15cfedda5c80cff`, both
+  binaries report `1.0.0-rc.1`, and the SBOM is CycloneDX 1.5 with 601
+  components. GitHub skips artifact attestation for user-owned private
+  repositories; the workflow and docs record that limitation, and checksums
+  and the SBOM are still published.
+- The gate exposed and fixed three flakes/blockers: the SBOM command no longer
+  forces `cargo metadata --offline` (the CI cache is not a complete offline
+  registry), the crashing-worker test waits past the handshake instead of
+  racing it, and the scan-cancel test waits for the CLI start marker instead of
+  sleeping 300 ms. The publish job checks out the tag because `gh release
+  create --verify-tag` needs a git repository.
+- Open: the draft prerelease is not publicly published (owner authorization),
+  Windows/macOS builds and terminal smoke checks, live NVDA/VoiceOver/Orca
+  sessions, the 10 GiB capture corpus, the unverified `wgpu` renderer, and CLI
+  annotations. `1.0.0` is not tagged; the candidate notes record these instead
+  of claiming support.
 
 ### P10.3 verification record
 
