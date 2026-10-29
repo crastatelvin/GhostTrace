@@ -1309,12 +1309,12 @@ tasks and the open accessibility/release-target items.
 
 **Consumes:** Passed P10 checks. **Produces:** Reproducible release process and artifacts for tested platforms.
 
-- [ ] Pin release actions by verified full commit SHA; configure minimal token permissions and trusted maintainer tag trigger.
-- [ ] Build native target binaries, CLI/desktop archives or platform bundles, shell completions, man/help docs, checksums, license notices, and dependency/SBOM inventory.
-- [ ] Smoke-run actual extracted artifacts offline on the declared OS/architecture, not just build them.
-- [ ] Verify source archives, locked/vendor build instructions, release digests, and provenance where the public workflow supports it.
+- [x] Pin release actions by verified full commit SHA; configure minimal token permissions and trusted maintainer tag trigger.
+- [x] Build native target binaries, CLI/desktop archives or platform bundles, shell completions, man/help docs, checksums, license notices, and dependency/SBOM inventory.
+- [x] Smoke-run actual extracted artifacts offline on the declared OS/architecture, not just build them.
+- [x] Verify source archives, locked/vendor build instructions, release digests, and provenance where the public workflow supports it.
 - [ ] Publish a release candidate, run Section 19 final investigation gate, and record remaining known issues.
-- [ ] Commit: `release: prepare verified GhostTrace 1.0 distributions`.
+- [x] Commit: `release: prepare verified GhostTrace 1.0 distributions`.
 - [ ] Tag/publish `1.0.0` only after every required release checklist item passes and the owner authorizes the actual publication when implementation reaches this point.
 
 ### P12 — Optional read-only localhost API after version 1.0
@@ -1383,6 +1383,45 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
 - Open: Windows/macOS failure injection, NVDA/VoiceOver, and native terminal
   smoke checks need their own hosts and remain P10/P11 gate items. Advisory
   scanning needs network and is scheduled rather than blocking every push.
+
+### P11 verification record
+
+- Workspace version `1.0.0-rc.1`; `cargo fmt --all -- --check`, `cargo clippy
+  --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace
+  --locked`, and `cargo run -p xtask -- check` pass on Linux x86_64
+  (2026-10-29).
+- `xtask package` writes a 46-file archive with both binaries, licences, all
+  user guides, tracked samples, `help.txt`, five generated completion scripts,
+  a 601-component CycloneDX 1.5 SBOM from `cargo metadata --locked --offline`,
+  `build-info.json`, and `RELEASE-NOTES.md`; the archive SHA-256 verifies.
+  `ghosttrace completions <shell>` is the one non-JSON stdout command and
+  generates the same scripts from the packaged binary.
+- Extracted-archive smoke: both binaries report `1.0.0-rc.1`; `sqlite-info`
+  reports FTS5; the failed-logon sample imports 11 events and yields exactly
+  two findings; `verify` passes; completions and the checksum file verify.
+- Rehearsal with the packaged binaries: the misleading-snapshot sample reports
+  `metadata_changed:1`, `content_changed_equal_metadata:1`, `appeared:1`,
+  `move_candidates:2`, `unknown:1`, `not_present_in_captured_scope:0`; a partial
+  capture verifies with one gap and `capture_complete:false`; a generated
+  Ed25519 key signs the manifest, which verifies as `untrusted` without a trust
+  list and `trusted` with the fingerprint; a tampered copy exits `4` with
+  `integrity_mismatch` while the original still verifies; backup (6 files,
+  270,647 bytes) restores, verifies with the same trust, and reproduces the
+  report's objects and 11 timeline entries; the TUI runs under a pty and exits
+  `0`; a non-TTY TUI exits `2` with no ANSI bytes. The rehearsal exposed and
+  fixed a relative `restore --destination <name>.ghosttrace-case` path.
+- `.github/workflows/release.yml` triggers only on `v*`, pins every third-party
+  action by commit SHA, gives the build job `contents: read` plus attestation
+  permissions, and gives only the publish job `contents: write`. It runs the
+  full check battery, builds, packages, creates a source archive and
+  `SHA256SUMS`, smoke-runs the extracted archive, uploads assets, attests build
+  provenance, and creates a draft prerelease. `docs/releases.md` documents
+  checksum/SBOM/attestation verification and an offline `cargo vendor` build
+  from the source archive.
+- Open: the workflow's GitHub run, Windows/macOS builds and terminal smoke
+  checks, live NVDA/VoiceOver/Orca sessions, the 10 GiB capture corpus, the
+  unverified `wgpu` renderer, and CLI annotations. `1.0.0` is not tagged; the
+  candidate notes record these instead of claiming support.
 
 ### P10.3 verification record
 

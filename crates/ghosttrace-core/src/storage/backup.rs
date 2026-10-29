@@ -542,9 +542,10 @@ pub fn restore_case(backup_directory: &Path, destination: &Path) -> CoreResult<R
             destination.display()
         )));
     }
-    let parent = destination.parent().ok_or_else(|| {
-        CoreError::InvalidInput("restore destination needs a parent directory".into())
-    })?;
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if !parent.is_dir() {
         return Err(CoreError::Storage(format!(
             "restore parent {} is not a directory",

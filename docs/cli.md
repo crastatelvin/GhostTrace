@@ -422,7 +422,7 @@ invalid usage.
 
 ```bash
 cargo build -p ghosttrace-cli --release
-cargo run -p xtask -- package --output dist --version 0.1.0-alpha.1
+cargo run -p xtask -- package --output dist --version 1.0.0-rc.1
 ```
 
 The archive includes the binary, licences, docs, `help.txt`, sample data, and a
@@ -577,6 +577,19 @@ failed, `2` stdin/stdout is not a terminal or the arguments are invalid.
 
 The TUI does not capture, import, export, or annotate: those stay explicit CLI
 or desktop actions. Mouse input is not required for any view.
+
+## `completions`
+
+```bash
+ghosttrace completions bash > ghosttrace.bash
+ghosttrace completions zsh  > _ghosttrace
+ghosttrace completions fish > ghosttrace.fish
+```
+
+The script is written to stdout; this is the only command whose stdout is not
+JSON. It opens no case and writes no files. The release archive ships generated
+scripts under `completions/`; they describe the same command surface as the
+packaged binary.
 
 ## Synthetic samples
 

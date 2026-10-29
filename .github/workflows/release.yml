@@ -1,0 +1,117 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# The build job only reads the repository. The publish job gets the one write
+# permission it needs; no PR code and no fork can reach this workflow.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build, smoke, and attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: "1.99.1"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: full check battery
+        run: cargo run -p xtask -- check
+
+      - name: build native CLI and desktop
+        run: cargo build --workspace --locked --release
+
+      - name: package, source archive, notes, checksums
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          cargo run -p xtask -- package --version "$VERSION" --output dist
+          git archive --format=tar.gz \
+            --prefix="ghosttrace-$VERSION/" \
+            -o "dist/ghosttrace-$VERSION-source.tar.gz" HEAD
+          cp "docs/releases/$VERSION.md" dist/RELEASE-NOTES.md
+          (cd dist && sha256sum ghosttrace-*.tar.gz > SHA256SUMS)
+
+      - name: smoke-run the extracted artifact
+        run: |
+          set -eu
+          mkdir -p smoke
+          tar -xzf dist/ghosttrace-*-x86_64-unknown-linux-gnu.tar.gz -C smoke
+          PACKAGE="$(find smoke -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -x "$PACKAGE/bin/ghosttrace"
+          test -x "$PACKAGE/bin/ghosttrace-desktop"
+          "$PACKAGE/bin/ghosttrace" --version
+          "$PACKAGE/bin/ghosttrace-desktop" --version
+          "$PACKAGE/bin/ghosttrace" sqlite-info >/dev/null
+          WORK="$(mktemp -d)"
+          "$PACKAGE/bin/ghosttrace" case create \
+            --case "$WORK/smoke.ghosttrace-case" --label "release smoke"
+          "$PACKAGE/bin/ghosttrace" scan \
+            --case "$WORK/smoke.ghosttrace-case" \
+            --source "$PACKAGE/samples/failed-logon-timeline/evidence" \
+            --claimed-source "release smoke" >/dev/null
+          "$PACKAGE/bin/ghosttrace" import \
+            --case "$WORK/smoke.ghosttrace-case" --path events.jsonl \
+            --format jsonl --time-field ts --time-format rfc3339 \
+            --kind-field kind --host-field host --message-field msg >/dev/null
+          "$PACKAGE/bin/ghosttrace" analyze \
+            --case "$WORK/smoke.ghosttrace-case" >/dev/null
+          "$PACKAGE/bin/ghosttrace" verify \
+            --case "$WORK/smoke.ghosttrace-case" >/dev/null
+          rm -rf "$WORK"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/*.tar.gz"
+
+  publish:
+    name: create draft prerelease
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+
+      - name: create the draft release with verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --draft \
+            --prerelease \
+            --title "GhostTrace $VERSION" \
+            --notes-file dist/RELEASE-NOTES.md \
+            dist/ghosttrace-*.tar.gz dist/SHA256SUMS

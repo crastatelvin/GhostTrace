@@ -162,6 +162,15 @@ pub enum Cli {
         long_about = "Browse the timeline, search, event detail, and findings interactively.\n\nThe TUI reads through the same query and analysis contracts as `timeline`, `search`, and `analyze`, so a selection yields the same recorded event and detail. It needs a terminal on stdin and stdout; redirected output is refused so pipelines never receive ANSI control bytes. Evidence text is escaped before it reaches the terminal, and the raw/alternate screen is restored on exit, error, and panic paths. Press ? inside for the key list."
     )]
     Tui(TuiArgs),
+    /// Print a shell completion script to stdout.
+    #[command(
+        long_about = "Print a shell completion script to stdout.\n\nThis is the one command whose stdout is not JSON: the output is the completion script itself, suitable for redirecting into the shell's completion directory. No case is opened and no files are written."
+    )]
+    Completions {
+        /// Shell to generate for.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Args)]
@@ -864,6 +873,15 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Analyze(args) => analyze(args),
         Cli::Worker(args) => worker(args),
         Cli::Tui(args) => crate::tui::run(&args.case, args.revision),
+        Cli::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut <Cli as clap::CommandFactory>::command(),
+                "ghosttrace",
+                &mut std::io::stdout(),
+            );
+            EXIT_OK
+        }
     }
 }
 

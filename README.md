@@ -11,16 +11,15 @@ instead of silently converting gaps into results.
 
 ## Status
 
-**Pre-1.0, Linux x86_64 verified.** P0–P10 are complete: safe capture, JSONL /
-syslog / journal-export / browser-history / EVTX import, the indexed timeline,
-search, coverage-aware diff, scoped entities and bounded relationships, five
-explainable rules with notes and saved views, the native desktop workbench, the
-terminal UI, Ed25519 signing, redacted reports and verifiable packages,
-backup/restore, fuzzing and crash recovery, and measured performance baselines.
-P11 (verified release distributions) is next. Windows and macOS are intended
-targets but unverified; see `docs/releases.md` for the platform matrix and
-known gaps. The phased plan and tracker are in
-`docs/plans/2026-10-23-ghosttrace-master-plan.md`.
+**Release candidate 1.0.0-rc.1, Linux x86_64 verified.** P0–P10 are complete,
+and P11 now provides the release-candidate pipeline: a checksummed CLI/desktop
+archive with generated shell completions, a CycloneDX SBOM, tracked samples,
+offline guides, a source archive, a tag-triggered workflow with pinned actions
+and build-provenance attestation, and a draft prerelease path. P11 is not
+finished and `1.0.0` is not tagged: Windows/macOS builds, live screen-reader
+sessions, and terminal smoke checks remain open gates. See
+`docs/releases/1.0.0-rc.1.md` for the candidate's tested results and known
+issues, and `docs/releases.md` for the platform matrix.
 
 | Release | Deliverable |
 |---|---|
@@ -80,6 +79,7 @@ coverage gap).
 | [Testing](docs/testing.md) | fuzz, recovery, dependency, and platform matrix |
 | [Threat model](docs/threat-model.md) | trust boundaries and claims not made |
 | [Releases](docs/releases.md) | verified environment and known gaps |
+| [Release candidate notes](docs/releases/1.0.0-rc.1.md) | tested results, install, known issues |
 
 ## License
 

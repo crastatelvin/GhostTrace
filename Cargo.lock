@@ -885,6 +885,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "037e2a1a92236d0aff7e845093f64661d6df4c02c9fcc61a60e9e1d736fa392f"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1992,11 +2001,12 @@ dependencies = [
 
 [[package]]
 name = "ghosttrace-cli"
-version = "0.1.0-alpha.1"
+version = "1.0.0-rc.1"
 dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "clap_complete",
  "crossterm",
  "ghosttrace-core",
  "nix",
@@ -2010,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "ghosttrace-core"
-version = "0.1.0-alpha.1"
+version = "1.0.0-rc.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -2033,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "ghosttrace-desktop"
-version = "0.1.0-alpha.1"
+version = "1.0.0-rc.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -6085,7 +6095,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.1"
+version = "1.0.0-rc.1"
 dependencies = [
  "chrono",
  "clap",

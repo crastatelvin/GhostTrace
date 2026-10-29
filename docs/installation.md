@@ -41,23 +41,32 @@ A prerelease archive is built with:
 
 ```bash
 cargo build --release -p ghosttrace-cli -p ghosttrace-desktop
-cargo run -p xtask -- package --output dist --version 0.1.0-alpha.1
+cargo run -p xtask -- package --output dist --version 1.0.0-rc.1
 ```
 
 The result is `dist/ghosttrace-<version>-<target>.tar.gz` and a sibling
 `.sha256`. Verify, unpack, and run:
 
 ```bash
-sha256sum -c ghosttrace-0.1.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz.sha256
-tar -xzf ghosttrace-0.1.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz
-./ghosttrace-0.1.0-alpha.1-x86_64-unknown-linux-gnu/bin/ghosttrace --help
-./ghosttrace-0.1.0-alpha.1-x86_64-unknown-linux-gnu/bin/ghosttrace-desktop --version
+sha256sum -c ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz
+./ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu/bin/ghosttrace --help
+./ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu/bin/ghosttrace-desktop --version
 ```
 
-The archive contains both binaries, the licences, the user guides, `help.txt`,
-and `build-info.json` with the commit, toolchain, target, and build facts. It
-does not modify `PATH`, install a service, or write outside the directory you
-run it from.
+The archive contains both binaries, the licences, the user guides, the tracked
+synthetic samples, `help.txt`, `completions/`, `sbom.cdx.json` (a CycloneDX 1.5
+inventory of the resolved Cargo graph), and `build-info.json` with the commit,
+toolchain, target, and build facts. It does not modify `PATH`, install a
+service, or write outside the directory you run it from.
+
+Shell completions are also available directly from the binary:
+
+```bash
+ghosttrace completions bash > ~/.local/share/bash-completion/completions/ghosttrace
+ghosttrace completions zsh  > ~/.zsh/completions/_ghosttrace
+ghosttrace completions fish > ~/.config/fish/completions/ghosttrace.fish
+```
 
 **Unsigned builds are normal.** The source and binaries are free. Platform
 trust is separate: Apple Developer ID/notarization and commercially trusted

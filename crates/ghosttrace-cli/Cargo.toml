@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 ghosttrace-core = { path = "../ghosttrace-core" }
 clap.workspace = true
+clap_complete.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 serde.workspace = true

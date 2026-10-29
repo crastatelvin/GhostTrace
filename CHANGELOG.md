@@ -12,6 +12,18 @@ file records implemented capability only.
 
 ### Added
 
+- P11 (2026-10-29): release-candidate distribution machinery — workspace
+  version `1.0.0-rc.1`, `ghosttrace completions <shell>` for bash/zsh/fish/
+  PowerShell/Elvish, archive contents now include all user guides, tracked
+  samples, generated completions, a CycloneDX 1.5 SBOM, release notes, and a
+  per-file `build-info.json`; `.github/workflows/release.yml` runs on `v*`
+  tags with SHA-pinned actions, a read-only build job, a write-scoped draft
+  release job, an extracted-archive smoke run, checksums, a source archive,
+  and build-provenance attestation. The rehearsal exposed and fixed relative
+  `restore --destination <name>.ghosttrace-case` paths. Release notes and
+  known gates are in `docs/releases/1.0.0-rc.1.md`; `1.0.0` remains untagged
+  until the open Windows/macOS and live screen-reader gates pass or the scope
+  is explicitly narrowed.
 - P10.3 (2026-10-29): complete offline user and contributor documentation —
   installation, first-run, upgrade, licensing, and custody guide
   (`docs/installation.md`), troubleshooting for permissions, WAL, schema, time,

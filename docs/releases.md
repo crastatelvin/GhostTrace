@@ -175,3 +175,94 @@ are in [limitations.md](limitations.md).
   These are recorded in `docs/worker-protocol.md` instead of being implied.
 - `0.3.0-beta.1` promotion still waits on the open accessibility and
   release-target gate items; no tag was created by P8.2.
+
+## P11 release artifacts and provenance (2026-10-29)
+
+The release workflow (`.github/workflows/release.yml`) runs only on a `v*` tag.
+It uses a read-only default token, checks out the tagged commit, runs the full
+`xtask check` battery, builds the native CLI/desktop pair, packages the
+archive, creates a source archive, writes `SHA256SUMS` and `RELEASE-NOTES.md`,
+smoke-runs the extracted archive (including a sample import/analyze/verify),
+uploads the assets, and attests build provenance. The publish job alone gets
+`contents: write`, and it creates a **draft prerelease**; publication is a
+separate authorized action. Third-party actions are pinned by commit SHA, not
+a tag.
+
+A release contains:
+
+| Asset | Contents |
+|---|---|
+| `ghosttrace-<version>-<target>.tar.gz` | `bin/ghosttrace`, `bin/ghosttrace-desktop`, licences, user docs, `help.txt`, `completions/`, `samples/`, `sbom.cdx.json`, `build-info.json`, `RELEASE-NOTES.md` |
+| `...tar.gz.sha256` | SHA-256 of the binary archive |
+| `ghosttrace-<version>-source.tar.gz` | `git archive` of the tagged commit |
+| `SHA256SUMS` | checksums for every archive in the release |
+| `RELEASE-NOTES.md` | concrete tested results, known issues, and gates |
+
+Verify a download before running it:
+
+```bash
+sha256sum -c ghosttrace-<version>-<target>.tar.gz.sha256
+tar -xzf ghosttrace-<version>-<target>.tar.gz
+./ghosttrace-<version>-<target>/bin/ghosttrace --version
+./ghosttrace-<version>-<target>/bin/ghosttrace-desktop --version
+```
+
+Check the build facts and dependency inventory:
+
+```bash
+python3 -m json.tool ghosttrace-<version>-<target>/build-info.json
+python3 -m json.tool ghosttrace-<version>-<target>/sbom.cdx.json >/dev/null
+```
+
+`sbom.cdx.json` is CycloneDX 1.5 generated from `cargo metadata --locked
+--offline`; it records the resolved package name, version, Cargo checksum,
+license string, and purl. It is an inventory, not a vulnerability verdict.
+
+When the workflow attests provenance, verify the archive against its GitHub
+Actions attestation (requires the GitHub CLI):
+
+```bash
+gh attestation verify ghosttrace-<version>-<target>.tar.gz \
+  --repo crastatelvin/GhostTrace
+```
+
+## Offline build from the source archive
+
+The source archive includes the committed `Cargo.lock`; the toolchain and native
+libraries are still prerequisites (vendoring is not a toolchain). In a prepared
+environment with the pinned Rust toolchain:
+
+```bash
+tar -xzf ghosttrace-<version>-source.tar.gz
+cd ghosttrace-<version>
+cargo vendor vendor
+mkdir -p .cargo
+cat > .cargo/config.toml <<'TOML'
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+TOML
+cargo build --workspace --locked --offline --release
+```
+
+Vendoring the crates does not fetch evidence, contact a server, or change the
+build inputs recorded in `build-info.json`.
+
+## Signing status
+
+Binaries and installers are **unsigned** unless a release note says otherwise.
+Optional platform signing (Apple notarization, commercial Windows signing) is
+separate from evidence signing and is not required to use GhostTrace. A
+manifest or package signature is produced locally with an encrypted Ed25519 key
+and verified with an explicit fingerprint list; see
+[formats.md](formats.md#signing-keys-and-detached-signatures-p91).
+
+## Open release gates
+
+Linux x86_64 is the only platform with build-and-run evidence. Live NVDA,
+VoiceOver, and Orca sessions, Windows Terminal/macOS terminal smoke checks, and
+native Windows/macOS builds remain open. The candidate notes record them
+instead of claiming support; `1.0.0` is not tagged until they pass or the
+release scope is explicitly narrowed.
