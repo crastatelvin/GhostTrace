@@ -91,7 +91,11 @@ impl WriteOp {
         }
     }
 
-    /// Build a single-row upsert (mutable job checkpoints).
+    /// Build a single-row upsert. The first column is the conflict key and is
+    /// never assigned in the `DO UPDATE` clause: assigning it (even to the same
+    /// value) makes SQLite treat the statement as a parent-key update and check
+    /// every child foreign key, which turns a per-batch progress write into a
+    /// scan of the whole event table.
     pub fn upsert(table: &'static str, columns: Vec<&'static str>, values: Vec<Param>) -> Self {
         Self {
             table,
@@ -109,9 +113,14 @@ impl WriteOp {
                 let updates: Vec<String> = self
                     .columns
                     .iter()
+                    .skip(1)
                     .map(|column| format!("{column} = excluded.{column}"))
                     .collect();
-                format!("ON CONFLICT DO UPDATE SET {}", updates.join(", "))
+                if updates.is_empty() {
+                    "ON CONFLICT DO NOTHING".to_string()
+                } else {
+                    format!("ON CONFLICT DO UPDATE SET {}", updates.join(", "))
+                }
             }
         };
         format!(
@@ -391,6 +400,11 @@ impl CaseWriter {
                 );
             }
         }
+        // Keep one shape contiguous so `run_batch` can pack a whole batch into
+        // one INSERT. Events precede their times because `event_times.event_id`
+        // is a foreign key.
+        let mut event_rows = Vec::new();
+        let mut time_rows = Vec::new();
         for event in events {
             let source = sources
                 .get(&event.id)
@@ -398,8 +412,16 @@ impl CaseWriter {
                     evidence_id,
                     locator_identity: locator,
                 });
-            batch.ops.extend(event_ops(event, revision, source)?);
+            for op in event_ops(event, revision, source)? {
+                if op.table == "event_times" {
+                    time_rows.push(op);
+                } else {
+                    event_rows.push(op);
+                }
+            }
         }
+        batch.ops.extend(event_rows);
+        batch.ops.extend(time_rows);
         self.execute(batch)
     }
 }
@@ -766,9 +788,17 @@ fn open_writer_connection(path: &Path) -> CoreResult<Connection> {
     connection
         .pragma_update(None, "synchronous", "FULL")
         .map_err(|e| CoreError::Storage(format!("synchronous: {e}")))?;
+    // Batch commits easily cross the default 1000-page threshold, so every
+    // commit was paying for a 4 MiB checkpoint. Bound the WAL at 10k pages
+    // (40 MiB) instead: same durability, one checkpoint per ~10 batches.
+    connection
+        .pragma_update(None, "wal_autocheckpoint", 10_000)
+        .map_err(|e| CoreError::Storage(format!("wal_autocheckpoint: {e}")))?;
     connection
         .pragma_update(None, "foreign_keys", "ON")
         .map_err(|e| CoreError::Storage(format!("foreign_keys: {e}")))?;
+    // A handful of INSERT shapes carry every batch; keep them all resident.
+    connection.set_prepared_statement_cache_capacity(64);
     Ok(connection)
 }
 
@@ -777,19 +807,51 @@ fn run_batch(connection: &Connection, batch: &WriteBatch) -> CoreResult<BatchRes
     let transaction = connection
         .unchecked_transaction()
         .map_err(|e| CoreError::Storage(format!("cannot begin write transaction: {e}")))?;
-    for op in &batch.ops {
-        let sql = op.sql();
-        let mut statement = transaction
-            .prepare(&sql)
-            .map_err(|e| CoreError::Storage(format!("prepare {}: {e}", op.table)))?;
-        for (index, value) in op.values.iter().enumerate() {
-            value
-                .bind(&mut statement, index + 1)
-                .map_err(|e| CoreError::Storage(format!("bind into {}: {e}", op.table)))?;
+    let mut index = 0;
+    while index < batch.ops.len() {
+        let op = &batch.ops[index];
+        if op.conflict == ConflictPolicy::Ignore
+            && !op.columns.is_empty()
+            && op.values.len() == op.columns.len()
+        {
+            let mut end = index + 1;
+            while end < batch.ops.len() && same_shape(op, &batch.ops[end]) {
+                end += 1;
+            }
+            // One statement per shape, not per row. Each statement with a
+            // trigger opens a statement journal; at one row per statement that
+            // fixed cost dominated a million-event import.
+            let rows = (end - index).min(MAX_BOUND_PARAMETERS / op.columns.len());
+            let sql = multi_row_sql(op.table, &op.columns, rows);
+            let mut statement = transaction
+                .prepare_cached(&sql)
+                .map_err(|e| CoreError::Storage(format!("prepare {}: {e}", op.table)))?;
+            for (row, item) in batch.ops[index..index + rows].iter().enumerate() {
+                for (column, value) in item.values.iter().enumerate() {
+                    value
+                        .bind(&mut statement, row * op.columns.len() + column + 1)
+                        .map_err(|e| CoreError::Storage(format!("bind into {}: {e}", op.table)))?;
+                }
+            }
+            applied += statement
+                .raw_execute()
+                .map_err(|e| CoreError::Storage(format!("insert into {}: {e}", op.table)))?;
+            index += rows;
+        } else {
+            let sql = op.sql();
+            let mut statement = transaction
+                .prepare_cached(&sql)
+                .map_err(|e| CoreError::Storage(format!("prepare {}: {e}", op.table)))?;
+            for (column, value) in op.values.iter().enumerate() {
+                value
+                    .bind(&mut statement, column + 1)
+                    .map_err(|e| CoreError::Storage(format!("bind into {}: {e}", op.table)))?;
+            }
+            applied += statement
+                .raw_execute()
+                .map_err(|e| CoreError::Storage(format!("insert into {}: {e}", op.table)))?;
+            index += 1;
         }
-        applied += statement
-            .raw_execute()
-            .map_err(|e| CoreError::Storage(format!("insert into {}: {e}", op.table)))?;
     }
     transaction
         .commit()
@@ -798,6 +860,36 @@ fn run_batch(connection: &Connection, batch: &WriteBatch) -> CoreResult<BatchRes
         attempted: batch.ops.len(),
         applied,
     })
+}
+
+/// SQLite's bundled build allows 32766 bound parameters per statement; leave a
+/// small margin and pack at most this many.
+const MAX_BOUND_PARAMETERS: usize = 32_000;
+
+fn same_shape(left: &WriteOp, right: &WriteOp) -> bool {
+    right.conflict == ConflictPolicy::Ignore
+        && right.table == left.table
+        && right.columns == left.columns
+        && right.values.len() == right.columns.len()
+        && right.values.len() == left.values.len()
+}
+
+fn multi_row_sql(table: &str, columns: &[&str], rows: usize) -> String {
+    let width = columns.len();
+    let placeholders: Vec<String> = (0..rows)
+        .map(|row| {
+            let row_values: Vec<String> = (0..width)
+                .map(|column| format!("?{}", row * width + column + 1))
+                .collect();
+            format!("({})", row_values.join(", "))
+        })
+        .collect();
+    format!(
+        "INSERT INTO {} ({}) VALUES {} ON CONFLICT DO NOTHING",
+        table,
+        columns.join(", "),
+        placeholders.join(", ")
+    )
 }
 
 #[cfg(test)]

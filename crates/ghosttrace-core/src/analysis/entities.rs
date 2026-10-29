@@ -157,61 +157,83 @@ pub fn build_entities(
     };
     let mut entities: BTreeSet<EntityRow> = BTreeSet::new();
     let mut links: BTreeSet<LinkRow> = BTreeSet::new();
-    let mut statement = reader
-        .connection()
-        .prepare(
-            "SELECT e.id, e.kind, e.host_claim, e.evidence_id, r.raw_fields_json,
-                    r.mapped_fields_json,
-                    o.native_path_kind, o.native_path_encoded, o.sha256, o.digest_status
-             FROM events e
-             LEFT JOIN raw_observations r
-               ON r.parse_run_id = e.parse_run_id
-              AND r.evidence_id = e.evidence_id
-              AND r.locator_identity = e.locator_identity
-             LEFT JOIN evidence_objects o ON o.id = e.evidence_id
-             WHERE e.parse_run_id = ?1
-             ORDER BY e.rowid
-             LIMIT ?2",
-        )
-        .map_err(|error| CoreError::Storage(format!("prepare entity scan: {error}")))?;
-    let mut rows = statement
-        .query(params![run_id, (MAX_EVENTS + 1) as i64])
-        .map_err(|error| CoreError::Storage(format!("scan entity events: {error}")))?;
-    while let Some(row) = rows
-        .next()
-        .map_err(|error| CoreError::Storage(format!("read entity event: {error}")))?
-    {
-        if report.events as usize >= MAX_EVENTS {
-            report.truncated = true;
+    // Scan in bounded chunks and close each read cursor before flushing.
+    // A single cursor held across the whole build pins the WAL snapshot while
+    // we insert hundreds of thousands of links, which can grow the WAL to
+    // gigabytes and starve later checkpoints and backups.
+    const CHUNK: usize = 10_000;
+    let mut last_rowid: i64 = 0;
+    while !report.truncated {
+        let mut chunk: Vec<(i64, EventRow)> = Vec::new();
+        {
+            let mut statement = reader
+                .connection()
+                .prepare(
+                    "SELECT e.id, e.kind, e.host_claim, e.evidence_id, r.raw_fields_json,
+                            r.mapped_fields_json,
+                            o.native_path_kind, o.native_path_encoded, o.sha256, o.digest_status,
+                            e.rowid
+                     FROM events e
+                     LEFT JOIN raw_observations r
+                       ON r.parse_run_id = e.parse_run_id
+                      AND r.evidence_id = e.evidence_id
+                      AND r.locator_identity = e.locator_identity
+                     LEFT JOIN evidence_objects o ON o.id = e.evidence_id
+                     WHERE e.parse_run_id = ?1 AND e.rowid > ?2
+                     ORDER BY e.rowid
+                     LIMIT ?3",
+                )
+                .map_err(|error| CoreError::Storage(format!("prepare entity scan: {error}")))?;
+            let mut rows = statement
+                .query(params![run_id, last_rowid, CHUNK as i64])
+                .map_err(|error| CoreError::Storage(format!("scan entity events: {error}")))?;
+            while let Some(row) = rows
+                .next()
+                .map_err(|error| CoreError::Storage(format!("read entity event: {error}")))?
+            {
+                chunk.push((
+                    row.get(10).map_err(storage_error)?,
+                    EventRow {
+                        event_id: row.get(0).map_err(storage_error)?,
+                        event_kind: row.get(1).map_err(storage_error)?,
+                        host_claim: row.get(2).map_err(storage_error)?,
+                        evidence_id: row.get(3).map_err(storage_error)?,
+                        raw_fields: row.get(4).map_err(storage_error)?,
+                        mapped_fields: row.get(5).map_err(storage_error)?,
+                        path_kind: row.get(6).map_err(storage_error)?,
+                        path_encoded: row.get(7).map_err(storage_error)?,
+                        digest: row.get(8).map_err(storage_error)?,
+                        digest_status: row.get(9).map_err(storage_error)?,
+                    },
+                ));
+            }
+        }
+        if chunk.is_empty() {
             break;
         }
-        let observed = EventRow {
-            event_id: row.get(0).map_err(storage_error)?,
-            event_kind: row.get(1).map_err(storage_error)?,
-            host_claim: row.get(2).map_err(storage_error)?,
-            evidence_id: row.get(3).map_err(storage_error)?,
-            raw_fields: row.get(4).map_err(storage_error)?,
-            mapped_fields: row.get(5).map_err(storage_error)?,
-            path_kind: row.get(6).map_err(storage_error)?,
-            path_encoded: row.get(7).map_err(storage_error)?,
-            digest: row.get(8).map_err(storage_error)?,
-            digest_status: row.get(9).map_err(storage_error)?,
-        };
-        report.events += 1;
-        if observed.evidence_id.is_none() {
-            report.events_without_source += 1;
+        for (rowid, observed) in chunk {
+            last_rowid = rowid;
+            if report.events as usize >= MAX_EVENTS {
+                report.truncated = true;
+                break;
+            }
+            report.events += 1;
+            if observed.evidence_id.is_none() {
+                report.events_without_source += 1;
+            }
+            for entity in entities_for(&observed, &acquisition) {
+                links.insert(LinkRow {
+                    event_id: observed.event_id.clone(),
+                    entity_id: entity.id.clone(),
+                    role: entity.kind.as_str(),
+                });
+                entities.insert(entity);
+            }
+            if links.len() >= FLUSH_LINKS {
+                flush(writer, &mut entities, &mut links)?;
+            }
         }
-        for entity in entities_for(&observed, &acquisition) {
-            links.insert(LinkRow {
-                event_id: observed.event_id.clone(),
-                entity_id: entity.id.clone(),
-                role: entity.kind.as_str(),
-            });
-            entities.insert(entity);
-        }
-        if links.len() >= FLUSH_LINKS {
-            flush(writer, &mut entities, &mut links)?;
-        }
+        flush(writer, &mut entities, &mut links)?;
     }
     flush(writer, &mut entities, &mut links)?;
 

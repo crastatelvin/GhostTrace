@@ -582,7 +582,7 @@ Reference profile: local SSD, 8 logical cores, 16 GiB RAM; record exact OS, CPU,
 
 - Timeline first-page indexed query: target p95 ≤ 200 ms warm, ≤ 1 s cold on the reference profile.
 - GUI interactions: target most frames ≤ 16.7 ms while imports run; no operation should block input for > 100 ms.
-- Structured JSONL ingest: starting target ≥ 25,000 normalized events/s on the reference profile, measured with writing/indexing included.
+- Structured JSONL ingest: starting target ≥ 25,000 normalized events/s on the reference profile, measured with writing/indexing included. P10.2 measured 5,150 events/s on a 6-core tmpfs host (3 rows and five indexes per event, FTS trigger, `synchronous=FULL`); the advertised target is narrowed to 5,000 events/s until a bulk-load path with deferred index rebuilds exists (see `docs/performance.md`).
 - Capture hashing: report MiB/s and files/s separately; compare with single-worker SHA-256 baseline, not a universal throughput promise.
 - Memory: target core analysis RSS ≤ 512 MiB on the 1-million-event dataset, with desktop/worker memory measured separately.
 - Relationship queries: bounded neighborhood p95 target ≤ 300 ms warm.
@@ -1283,11 +1283,11 @@ tasks and the open accessibility/release-target items.
 
 **Consumes:** Section 14 targets. **Produces:** Reproducible baseline with hardware/build/seed/versions and measured limits.
 
-- [ ] Generate small/1-million-event/large-file corpora and verify known counts/hashes before timing.
-- [ ] Measure capture throughput, normalized ingest including writes, cold/warm query p95, peak RSS, graph bounds, GUI responsiveness, cancellation, and backup cost.
-- [ ] Inspect slow query plans and queue pressure; optimize proven bottlenecks with unchanged semantic assertions.
-- [ ] Re-measure material regressions; publish achieved values and limitations, adjusting advertised targets honestly.
-- [ ] Commit: `perf: establish measured capture and timeline performance baselines`.
+- [x] Generate small/1-million-event/large-file corpora and verify known counts/hashes before timing.
+- [x] Measure capture throughput, normalized ingest including writes, cold/warm query p95, peak RSS, graph bounds, GUI responsiveness, cancellation, and backup cost.
+- [x] Inspect slow query plans and queue pressure; optimize proven bottlenecks with unchanged semantic assertions.
+- [x] Re-measure material regressions; publish achieved values and limitations, adjusting advertised targets honestly.
+- [x] Commit: `perf: establish measured capture and timeline performance baselines`.
 
 #### P10.3 — Complete user and contributor documentation
 
@@ -1363,7 +1363,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P9 | P9.1 | Signatures/standard private keys/trust | [x] |
 | P9 | P9.2 | Redacted packages/backup/restore | [x] |
 | P10 | P10.1 | Fuzz/recovery/platform safety | [x] |
-| P10 | P10.2 | Measured benchmark baselines | [ ] |
+| P10 | P10.2 | Measured benchmark baselines | [x] |
 | P10 | P10.3 | Complete docs/sample investigations | [ ] |
 | P11 | P11 | Verified release distributions | [ ] |
 | P12 | P12 | Optional read-only local API | [ ] |
@@ -1383,6 +1383,32 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
 - Open: Windows/macOS failure injection, NVDA/VoiceOver, and native terminal
   smoke checks need their own hosts and remain P10/P11 gate items. Advisory
   scanning needs network and is scheduled rather than blocking every push.
+
+### P10.2 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-29).
+- `xtask scale run` on seed 1: 1,000,000 JSONL events / 200 files
+  (`fb2417c5…`), capture 212.9 MiB/s, ingest 5,150 events/s (194.2 s), peak RSS
+  69.5 MiB, first page p95 0.71 ms, histogram p95 376 ms, backup 51.0 s plus
+  11.4 s verification; 20,000-event graph run produced 32,829 entities,
+  60,000 links, 5,000 bounded edges, relationship p95 1.38 ms; large-file run
+  184.6 MiB/s. Full numbers and limitations: `docs/performance.md`.
+- Criterion (`queries`, 20k fixture): first page 1.42 ms, histogram 9.34 ms,
+  phrase search 762 µs, detail 574 µs. GUI frame test (release, ignored):
+  p50 0.90 ms / p95 0.92 ms / max 0.96 ms at 1,000 rows and 60 bins.
+- Optimizations, each re-measured: progress upserts no longer assign the
+  primary key (removed an O(n) child-FK scan per batch); batches use multi-row
+  inserts instead of one statement per row; WAL autocheckpoint is bounded at
+  10,000 pages; entity scans read 10k-event chunks so a long-lived cursor no
+  longer pins a multi-GiB WAL (found by the backup measurement); backup
+  checkpoints the WAL best-effort before snapshotting.
+- Honest narrowing: the 25,000 events/s target is not met on this profile. The
+  remaining cost is per-row SQLite index/FTS maintenance and durable commits;
+  a bulk-load path would change crash semantics and is deferred. Open: full
+  10 GiB / 100,000-file capture corpus, Windows/macOS measurements, and
+  screen-reader runs remain P10/P11 gate items.
 
 ### P9.2 verification record
 

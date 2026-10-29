@@ -118,3 +118,26 @@ Build success alone is not support. The Windows/macOS safety modules, NVDA,
 VoiceOver, Windows Terminal, and macOS terminal smoke checks remain release-gate
 items in P10/P11; until they run, the documentation describes only Linux x86_64
 as tested.
+
+## Scale corpora and benchmarks (P10.2)
+
+`xtask scale generate` writes a deterministic corpus and records exact counts
+and SHA-256 digests in `corpus.json`; `xtask scale run` re-verifies that
+manifest before timing anything, so a benchmark number always names the bytes
+it measured.
+
+```bash
+# 1,000,000 events, 200 small files, no large file
+cargo run --release -p xtask -- scale run \
+  --output /tmp/opencode/scale-1m --events 1000000 --files 200 --iterations 20
+
+# large-file capture throughput (64 MiB)
+cargo run --release -p xtask -- scale run \
+  --output /tmp/opencode/scale-large --events 1000 --files 10 \
+  --large-file-bytes 67108864 --iterations 5 --skip-graph
+```
+
+`crates/ghosttrace-core/benches/queries.rs` holds Criterion microbenchmarks for
+the first page, histogram, phrase search, and event detail on a 20,000-event
+case. Run them with `cargo bench -p ghosttrace-core --bench queries`. The
+recorded baselines and their limits are in `docs/performance.md`.

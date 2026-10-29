@@ -4,6 +4,7 @@ mod check;
 mod deps;
 mod fixtures;
 mod package;
+mod scale;
 
 use clap::Parser;
 
@@ -14,6 +15,11 @@ enum Cli {
     Check,
     /// Check dependency licenses (offline) and advisories (when cargo-audit is installed).
     Deps,
+    /// Generate a deterministic corpus and measure capture/ingest/query/backup.
+    Scale {
+        #[command(subcommand)]
+        command: scale::ScaleCommand,
+    },
     /// Verify the tracked fixture catalog (digests, licenses, safety).
     Fixtures {
         /// Verify the fixture catalog against files on disk.
@@ -41,6 +47,7 @@ fn main() {
     let result = match Cli::parse() {
         Cli::Check => check::run(),
         Cli::Deps => deps::run(),
+        Cli::Scale { command } => scale::run(command),
         Cli::Fixtures { verify } => {
             assert!(verify, "fixtures currently supports only --verify");
             let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

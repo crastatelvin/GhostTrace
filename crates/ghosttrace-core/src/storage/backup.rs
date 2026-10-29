@@ -67,7 +67,9 @@ pub fn backup_and_verify(
             // between pages; P9.2 replaces this with chunked progress.
             backup
                 .run_to_completion(1024, std::time::Duration::from_millis(1), None)
-                .map_err(|e| CoreError::Storage(format!("backup run: {e}")))?;
+                .map_err(|e| {
+                    CoreError::Storage(format!("backup run: {e} ({:?})", e.sqlite_error_code()))
+                })?;
         }
         destination
             .close()
@@ -325,6 +327,11 @@ pub fn backup_case(
         )
         .saturating_add(64 * 1024 * 1024);
     crate::capture::copy::ensure_reserve(output, estimate, 0)?;
+
+    // Best effort: fold the WAL back into the main file before snapshotting.
+    // The backup API sees committed WAL data either way; this keeps the
+    // snapshot from needing a second copy of a large WAL on disk.
+    let _ = source.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
 
     let created = chrono::Utc::now();
     let backup_id = format!(

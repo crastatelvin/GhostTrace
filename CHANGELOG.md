@@ -12,6 +12,19 @@ file records implemented capability only.
 
 ### Added
 
+- P10.2 (2026-10-29): measured capture, ingest, query, graph, backup, and GUI
+  baselines on a reproducible corpus (`docs/performance.md`), plus three
+  fixes the measurements exposed: progress upserts no longer update the
+  primary key (which forced an O(n) foreign-key scan per batch), batches are
+  packed into multi-row inserts instead of one statement per row, and the WAL
+  checkpoint bound is raised so commits stop paying for a 4 MiB checkpoint
+  each time. Entity scans now read 10,000-event chunks so a long-lived read
+  cursor cannot pin a multi-GiB WAL; the backup also checkpoints before
+  snapshotting. Measured 1M-event ingest is 5,150 events/s (from 814/s),
+  first page p95 0.71 ms, RSS 69.5 MiB, backup 51 s + 11 s verification. The
+  25,000 events/s target is narrowed to 5,000 on this profile because the
+  remaining cost is per-row index/FTS maintenance and durable commits; the
+  limitation is documented rather than hidden.
 - P0.1 (2026-10-23): verified Rust workspace and native desktop stack —
   workspace crates (`ghosttrace-core`, `ghosttrace-cli`,
   `ghosttrace-desktop`), pinned toolchain 1.99.1 with committed lockfile,

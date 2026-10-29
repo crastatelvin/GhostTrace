@@ -24,3 +24,8 @@ zeroize.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "queries"
+harness = false
