@@ -225,6 +225,11 @@ gh attestation verify ghosttrace-<version>-<target>.tar.gz \
   --repo crastatelvin/GhostTrace
 ```
 
+Attestation is skipped when the repository is a user-owned private repository
+because GitHub does not offer that feature there; checksums and the SBOM are
+still published. A public mirror or organization-owned repository can attest
+the same workflow without changing the artifacts.
+
 ## Offline build from the source archive
 
 The source archive includes the committed `Cargo.lock`; the toolchain and native
