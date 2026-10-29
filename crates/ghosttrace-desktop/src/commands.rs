@@ -26,7 +26,10 @@ use ghosttrace_core::domain::case::AcquisitionMethod;
 use ghosttrace_core::domain::path::NativePath;
 use ghosttrace_core::error::{CoreError, CoreResult};
 use ghosttrace_core::ingest::{ImportRequest, LogFormat, run_import};
-use ghosttrace_core::integrity::manifest::ManifestV1;
+use ghosttrace_core::integrity::keys::{generate_key_file, load_key_file};
+use ghosttrace_core::integrity::signature::{
+    self, KeyTrust, ManifestStatus, SignatureEnvelope, SignatureStatus, TrustedKeys, sidecar_path,
+};
 use ghosttrace_core::reports::{self, ReportContext, ReportSelection};
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
 
@@ -48,6 +51,7 @@ pub enum JobPhase {
     SaveView,
     Report,
     Verify,
+    Sign,
 }
 
 impl JobPhase {
@@ -63,6 +67,7 @@ impl JobPhase {
             JobPhase::SaveView => "save view",
             JobPhase::Report => "export report",
             JobPhase::Verify => "verify manifest",
+            JobPhase::Sign => "sign manifest",
         }
     }
 }
@@ -134,13 +139,47 @@ pub enum Command {
         event_limit: u32,
         report_id: Option<String>,
     },
-    /// Verify the stored bytes of one acquisition manifest.
+    /// Verify the stored bytes of one acquisition manifest and its detached
+    /// signature when one is present or named.
     Verify {
         id: JobId,
         case_directory: String,
         manifest_path: Option<String>,
         acquisition_id: Option<String>,
+        signature_path: Option<String>,
+        trust_path: Option<String>,
     },
+    /// Sign the exact bytes of one stored manifest. The passphrase lives only
+    /// in this command and is zeroized when the worker drops it.
+    Sign {
+        id: JobId,
+        case_directory: String,
+        manifest_path: Option<String>,
+        acquisition_id: Option<String>,
+        key_path: String,
+        passphrase: Secret,
+    },
+}
+
+/// A passphrase held in memory only for the duration of one job. `Debug`
+/// never prints it, so an accidental log line cannot leak it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secret(zeroize::Zeroizing<String>);
+
+impl Secret {
+    pub fn new(value: String) -> Self {
+        Self(zeroize::Zeroizing::new(value))
+    }
+
+    pub fn expose(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Secret(<redacted>)")
+    }
 }
 
 impl Command {
@@ -155,7 +194,8 @@ impl Command {
             | Command::Annotate { id, .. }
             | Command::SaveView { id, .. }
             | Command::Report { id, .. }
-            | Command::Verify { id, .. } => *id,
+            | Command::Verify { id, .. }
+            | Command::Sign { id, .. } => *id,
         }
     }
 
@@ -171,6 +211,7 @@ impl Command {
             Command::SaveView { .. } => JobPhase::SaveView,
             Command::Report { .. } => JobPhase::Report,
             Command::Verify { .. } => JobPhase::Verify,
+            Command::Sign { .. } => JobPhase::Sign,
         }
     }
 }
@@ -244,6 +285,18 @@ pub enum Outcome {
         total_bytes: u64,
         captured: u64,
         gaps: u64,
+        signature: String,
+        signature_detail: Option<String>,
+        key_trust: String,
+        key_fingerprint: Option<String>,
+        capture_complete: Option<bool>,
+        explanation: String,
+    },
+    Signed {
+        manifest: String,
+        signature: String,
+        public_key: String,
+        key_fingerprint: String,
     },
 }
 
@@ -466,8 +519,30 @@ fn worker(commands: Receiver<Command>, events: Sender<CommandEvent>, registry: A
                 case_directory,
                 manifest_path,
                 acquisition_id,
+                signature_path,
+                trust_path,
                 ..
-            } => verify_manifest(&case_directory, manifest_path, acquisition_id),
+            } => verify_manifest(
+                &case_directory,
+                manifest_path,
+                acquisition_id,
+                signature_path,
+                trust_path,
+            ),
+            Command::Sign {
+                case_directory,
+                manifest_path,
+                acquisition_id,
+                key_path,
+                passphrase,
+                ..
+            } => sign_manifest(
+                &case_directory,
+                manifest_path,
+                acquisition_id,
+                &key_path,
+                &passphrase,
+            ),
         };
         registry.finish(id);
         let event = match result {
@@ -771,10 +846,125 @@ fn verify_manifest(
     case_directory: &str,
     manifest_path: Option<String>,
     acquisition_id: Option<String>,
+    signature_path: Option<String>,
+    trust_path: Option<String>,
 ) -> CoreResult<Outcome> {
     let (session, _open) = CaseSession::open(PathBuf::from(case_directory))?;
-    let path = match manifest_path.filter(|path| !path.trim().is_empty()) {
-        Some(path) => PathBuf::from(path),
+    let path = resolve_manifest(&session, manifest_path, acquisition_id)?;
+    let trust = match trust_path.filter(|path| !path.trim().is_empty()) {
+        Some(path) => Some(TrustedKeys::load(Path::new(&path))?),
+        None => None,
+    };
+    let signature_path = signature_path
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from);
+    let report = signature::verify_manifest(
+        session.layout().root(),
+        &path,
+        signature_path.as_deref(),
+        trust.as_ref(),
+    )?;
+    let (manifest_id, acquisition_id, format, objects, total_bytes, captured, gaps) =
+        match &report.manifest {
+            ManifestStatus::Verified(result) => (
+                result.manifest_id.clone(),
+                result.acquisition_id.clone(),
+                result.format.clone(),
+                result.objects_verified as u64,
+                result.total_bytes,
+                result.captured,
+                result.gaps,
+            ),
+            ManifestStatus::Rejected { code, detail } => {
+                return Err(if code == "integrity_mismatch" {
+                    CoreError::IntegrityMismatch
+                } else {
+                    CoreError::Unsupported(detail.clone())
+                });
+            }
+        };
+    let (signature, signature_detail) = match &report.signature {
+        SignatureStatus::Absent => ("absent".to_string(), None),
+        SignatureStatus::Valid => ("valid".to_string(), None),
+        SignatureStatus::Invalid(reason) => ("invalid".to_string(), Some(reason.clone())),
+    };
+    let key_trust = match report.key_trust {
+        KeyTrust::NotApplicable => "not_applicable",
+        KeyTrust::Untrusted => "untrusted",
+        KeyTrust::Trusted => "trusted",
+    }
+    .to_string();
+    let explanation = explain_verification(&report);
+    Ok(Outcome::Verified {
+        manifest_id,
+        acquisition_id,
+        format,
+        objects,
+        total_bytes,
+        captured,
+        gaps,
+        signature,
+        signature_detail,
+        key_trust,
+        key_fingerprint: report.key_fingerprint,
+        capture_complete: report.capture_complete,
+        explanation,
+    })
+}
+
+/// One plain-language sentence combining the independent statuses.
+fn explain_verification(
+    report: &ghosttrace_core::integrity::signature::SignedManifestVerification,
+) -> String {
+    let mut parts = Vec::new();
+    match &report.manifest {
+        ManifestStatus::Verified(_) => {
+            parts.push("The stored object bytes match the manifest record.".to_string())
+        }
+        ManifestStatus::Rejected { .. } => {
+            parts.push("The stored bytes do not match the manifest record.".to_string())
+        }
+    }
+    match (&report.signature, report.key_trust) {
+        (SignatureStatus::Absent, _) => parts.push(
+            "No detached signature is present: this proves the bytes match the record, not who \
+             produced it."
+                .to_string(),
+        ),
+        (SignatureStatus::Valid, KeyTrust::Trusted) => parts
+            .push("The signature is valid and its key is in your trusted-key list.".to_string()),
+        (SignatureStatus::Valid, _) => parts.push(
+            "The signature is mathematically valid, but the key is not in your trusted-key list: \
+             it proves the bytes were signed by that key, not that the key is yours."
+                .to_string(),
+        ),
+        (SignatureStatus::Invalid(reason), _) => parts.push(format!(
+            "The signature does not cover these bytes: {reason}."
+        )),
+    }
+    match report.capture_complete {
+        Some(true) => parts.push(
+            "Capture completeness: no coverage gaps were recorded for the declared scope."
+                .to_string(),
+        ),
+        Some(false) => parts.push(
+            "Capture completeness: coverage gaps were recorded; the manifest is complete only for \
+             the captured scope."
+                .to_string(),
+        ),
+        None => {}
+    }
+    parts.join(" ")
+}
+
+/// Resolve `--manifest` or the newest acquisition's manifest inside a case.
+fn resolve_manifest(
+    session: &CaseSession,
+    manifest_path: Option<String>,
+    acquisition_id: Option<String>,
+) -> CoreResult<PathBuf> {
+    match manifest_path.filter(|path| !path.trim().is_empty()) {
+        Some(path) => Ok(PathBuf::from(path)),
         None => {
             let acquisition = match acquisition_id {
                 Some(id) => id,
@@ -789,21 +979,46 @@ fn verify_manifest(
                         })?
                 }
             };
-            session
+            Ok(session
                 .layout()
                 .manifests_root()
-                .join(format!("manifest-{acquisition}.json"))
+                .join(format!("manifest-{acquisition}.json")))
         }
-    };
-    let result = ManifestV1::verify_file(&path, session.layout().root())?;
-    Ok(Outcome::Verified {
-        manifest_id: result.manifest_id,
-        acquisition_id: result.acquisition_id,
-        format: result.format,
-        objects: result.objects_verified as u64,
-        total_bytes: result.total_bytes,
-        captured: result.captured,
-        gaps: result.gaps,
+    }
+}
+
+/// Sign a stored manifest with an existing encrypted key. A key is generated
+/// first when the key path does not exist yet, so the GUI never has to shell
+/// out; an existing key is never overwritten.
+fn sign_manifest(
+    case_directory: &str,
+    manifest_path: Option<String>,
+    acquisition_id: Option<String>,
+    key_path: &str,
+    passphrase: &Secret,
+) -> CoreResult<Outcome> {
+    if key_path.trim().is_empty() {
+        return Err(CoreError::InvalidInput(
+            "enter the path of the signing key file".into(),
+        ));
+    }
+    let (session, _open) = CaseSession::open(PathBuf::from(case_directory))?;
+    let manifest = resolve_manifest(&session, manifest_path, acquisition_id)?;
+    let key = PathBuf::from(key_path);
+    if !key.exists() {
+        generate_key_file(&key, passphrase.expose().as_bytes())?;
+    }
+    let unlocked = load_key_file(&key, passphrase.expose().as_bytes())?;
+    let identity = unlocked.identity();
+    let bytes = std::fs::read(&manifest)
+        .map_err(|error| CoreError::Storage(format!("manifest read: {error}")))?;
+    let envelope = SignatureEnvelope::sign(&bytes, &unlocked);
+    let published = envelope.write_atomic(&sidecar_path(&manifest))?;
+    Ok(Outcome::Signed {
+        manifest: native_path(&manifest).encoded(),
+        signature: native_path(&published).encoded(),
+        public_key: identity.public_key,
+        key_fingerprint: identity.key_fingerprint,
     })
 }
 

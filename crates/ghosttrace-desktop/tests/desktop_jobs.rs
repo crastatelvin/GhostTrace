@@ -8,7 +8,7 @@ use ghosttrace_core::analysis::annotations::AppendAnnotation;
 use ghosttrace_core::analysis::views::SavedFilter;
 use ghosttrace_core::domain::case::AcquisitionMethod;
 use ghosttrace_core::domain::finding::Disposition;
-use ghosttrace_desktop::commands::{Command, CommandBus, CommandEvent, Outcome};
+use ghosttrace_desktop::commands::{Command, CommandBus, CommandEvent, Outcome, Secret};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -279,15 +279,93 @@ fn worker_creates_captures_and_imports_a_case() {
                 case_directory: case.clone(),
                 manifest_path: None,
                 acquisition_id: None,
+                signature_path: None,
+                trust_path: None,
             });
             let (_, event) = wait_for(&bus, |event| {
                 matches!(event, CommandEvent::Finished { id: 9, .. })
             });
             match event {
                 CommandEvent::Finished {
-                    outcome: Outcome::Verified { objects, .. },
+                    outcome:
+                        Outcome::Verified {
+                            objects,
+                            signature,
+                            key_trust,
+                            capture_complete,
+                            ..
+                        },
                     ..
-                } => assert!(objects >= 1),
+                } => {
+                    assert!(objects >= 1);
+                    assert_eq!(signature, "absent");
+                    assert_eq!(key_trust, "not_applicable");
+                    assert_eq!(capture_complete, Some(true));
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+
+            // Signing from the desktop uses the same encrypted key format and
+            // the same detached sidecar as the CLI.
+            bus.send(Command::Sign {
+                id: 12,
+                case_directory: case.clone(),
+                manifest_path: None,
+                acquisition_id: None,
+                key_path: dir
+                    .path()
+                    .join("signing.pem")
+                    .to_string_lossy()
+                    .into_owned(),
+                passphrase: Secret::new("correct horse battery staple".into()),
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 12, .. })
+            });
+            match event {
+                CommandEvent::Finished {
+                    outcome:
+                        Outcome::Signed {
+                            key_fingerprint,
+                            public_key,
+                            ..
+                        },
+                    ..
+                } => {
+                    assert_eq!(key_fingerprint.len(), 64);
+                    assert_eq!(public_key.len(), 64);
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+            bus.send(Command::Verify {
+                id: 13,
+                case_directory: case.clone(),
+                manifest_path: None,
+                acquisition_id: None,
+                signature_path: None,
+                trust_path: None,
+            });
+            let (_, event) = wait_for(&bus, |event| {
+                matches!(event, CommandEvent::Finished { id: 13, .. })
+            });
+            match event {
+                CommandEvent::Finished {
+                    outcome:
+                        Outcome::Verified {
+                            signature,
+                            key_trust,
+                            explanation,
+                            ..
+                        },
+                    ..
+                } => {
+                    assert_eq!(signature, "valid");
+                    assert_eq!(key_trust, "untrusted");
+                    assert!(
+                        explanation.contains("not that the key is yours"),
+                        "{explanation}"
+                    );
+                }
                 other => panic!("unexpected event: {other:?}"),
             }
 

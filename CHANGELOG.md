@@ -164,6 +164,22 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P9.1 (2026-10-29): signed evidence manifests with explicit key trust —
+  detached Ed25519 signatures over the exact manifest bytes
+  (`b"GhostTrace manifest v1"` + NUL + SHA-256 of the complete file) in a
+  versioned `<manifest>.sig.json` sidecar. Keys are standard encrypted PKCS#8
+  (PBES2 + scrypt + AES-256-CBC) created with mode `0600`, OS randomness, and
+  zeroization; loading refuses symlinks, group/other-readable files, foreign
+  ownership, oversized files, legacy PBES1, non-AES-256-CBC ciphers, and
+  out-of-bound KDF parameters. `ghosttrace key generate|import|public`,
+  `ghosttrace sign`, and `verify --signature/--trust` prompt for passphrases on
+  a terminal only. Verification reports object digests, signature validity, and
+  key trust as separate statuses, so a valid signature from an unknown key is
+  "valid signature, untrusted key", never a silent success or a false failure.
+  The desktop verify screen shows the same statuses plus capture completeness
+  and can sign a manifest with a password field that is cleared after use.
+  Known-answer tests pin the domain message against an independent OpenSSL
+  signature, and the RFC 8032 vector is checked.
 - P8.2 (2026-10-29): isolated parser workers — EVTX and journal-export
   decoding runs in a private-mode subprocess (`ghosttrace worker --protocol 1`)
   resolved beside the application, never through `PATH`. The worker gets a

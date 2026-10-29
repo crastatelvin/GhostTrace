@@ -26,7 +26,11 @@ use ghosttrace_core::ingest::{
     self, DEFAULT_MAX_RECORD_BYTES, DEFAULT_MAX_RECORDS, ImportRequest, JsonlConfig, LogFormat,
     SyslogConfig, TimeFormat,
 };
-use ghosttrace_core::integrity::manifest::ManifestV1;
+use ghosttrace_core::integrity::keys::{generate_key_file, import_key_file, load_key_file};
+use ghosttrace_core::integrity::signature::{
+    KeyTrust, ManifestStatus, SignatureEnvelope, SignatureStatus, TrustedKeys, sidecar_path,
+    verify_manifest,
+};
 use ghosttrace_core::reports::{self, ReportContext, ReportSelection};
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
 use ghosttrace_core::storage::CASE_DIR_SUFFIX;
@@ -87,6 +91,13 @@ pub enum Cli {
  prove a copy or move. Acquisitions with different roots are reported unknown.\
  Timestamp equality never proves unchanged bytes.")]
     Diff(DiffArgs),
+    /// Generate, import, or inspect an encrypted Ed25519 signing key.
+    Key(KeyArgs),
+    /// Sign the exact bytes of a stored acquisition manifest.
+    #[command(
+        long_about = "Sign the exact bytes of a stored acquisition manifest.\n\nThe passphrase is read from the terminal, never from an argument or the environment, and the key is zeroized after use. The detached sidecar records the protocol version, algorithm, manifest digest, public key, fingerprint, and signature; an existing sidecar is never overwritten. A signature proves the bytes were signed by that key, not that the key is yours."
+    )]
+    Sign(SignArgs),
     /// Verify a stored acquisition manifest and its captured objects.
     #[command(
         long_about = "Verify a stored acquisition manifest and its captured objects.\
@@ -323,6 +334,65 @@ pub struct VerifyArgs {
     /// Acquisition whose manifest to verify when --manifest is omitted.
     #[arg(long)]
     pub acquisition: Option<String>,
+    /// Detached signature sidecar (default: <manifest>.sig.json when present).
+    #[arg(long)]
+    pub signature: Option<PathBuf>,
+    /// Trusted-key fingerprint list (one 64-character fingerprint per line).
+    #[arg(long)]
+    pub trust: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct KeyArgs {
+    #[command(subcommand)]
+    pub command: KeyCommand,
+}
+
+#[derive(Subcommand)]
+pub enum KeyCommand {
+    /// Generate an encrypted Ed25519 signing key (prompts for a passphrase).
+    Generate(KeyGenerateArgs),
+    /// Re-encrypt an existing encrypted PKCS#8 key under a new passphrase.
+    Import(KeyImportArgs),
+    /// Print the public key and fingerprint (prompts for the passphrase).
+    Public(KeyPublicArgs),
+}
+
+#[derive(Args)]
+pub struct KeyGenerateArgs {
+    /// Destination key file (created with mode 0600; never overwritten).
+    #[arg(long)]
+    pub out: PathBuf,
+}
+
+#[derive(Args)]
+pub struct KeyImportArgs {
+    /// Existing encrypted PKCS#8 key file.
+    #[arg(long = "in")]
+    pub input: PathBuf,
+    /// Destination key file (must differ from --in; never overwritten).
+    #[arg(long)]
+    pub out: PathBuf,
+}
+
+#[derive(Args)]
+pub struct KeyPublicArgs {
+    /// Encrypted key file.
+    #[arg(long)]
+    pub key: PathBuf,
+}
+
+#[derive(Args)]
+pub struct SignArgs {
+    /// Manifest file whose exact stored bytes are signed.
+    #[arg(long)]
+    pub manifest: PathBuf,
+    /// Encrypted key file (passphrase prompted, never an argument).
+    #[arg(long)]
+    pub key: PathBuf,
+    /// Signature sidecar (default: <manifest>.sig.json).
+    #[arg(long)]
+    pub out: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -548,14 +618,38 @@ struct SearchOutput {
 #[derive(Serialize)]
 struct VerifyOutput {
     verified: bool,
-    manifest_id: String,
-    acquisition_id: String,
-    format: String,
-    objects_verified: usize,
-    total_bytes: u64,
-    captured: u64,
-    gaps: u64,
+    manifest_id: Option<String>,
+    acquisition_id: Option<String>,
+    format: Option<String>,
+    objects_verified: Option<usize>,
+    total_bytes: Option<u64>,
+    captured: Option<u64>,
+    gaps: Option<u64>,
     signed: bool,
+    signature: String,
+    signature_detail: Option<String>,
+    key_trust: String,
+    key_fingerprint: Option<String>,
+    public_key: Option<String>,
+    capture_complete: Option<bool>,
+    explanation: String,
+}
+
+#[derive(Serialize)]
+struct KeyOutput {
+    path: String,
+    public_key: String,
+    key_fingerprint: String,
+}
+
+#[derive(Serialize)]
+struct SignOutput {
+    manifest: String,
+    signature: String,
+    algorithm: String,
+    manifest_sha256: String,
+    public_key: String,
+    key_fingerprint: String,
 }
 
 #[derive(Serialize)]
@@ -595,6 +689,8 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Timeline(args) => timeline(args),
         Cli::Search(args) => search(args),
         Cli::Diff(args) => diff(args),
+        Cli::Key(args) => key(args),
+        Cli::Sign(args) => sign(args),
         Cli::Verify(args) => verify(args),
         Cli::Report(args) => report(args),
         Cli::Import(args) => import(args),
@@ -817,31 +913,257 @@ fn verify(args: VerifyArgs) -> u8 {
         }
     };
 
-    match ManifestV1::verify_file(&manifest_path, &case_root) {
-        Ok(result) => {
-            output::emit_json(&VerifyOutput {
-                verified: true,
-                manifest_id: result.manifest_id,
-                acquisition_id: result.acquisition_id,
-                format: result.format,
-                objects_verified: result.objects_verified,
-                total_bytes: result.total_bytes,
-                captured: result.captured,
-                gaps: result.gaps,
-                signed: false,
-            });
-            EXIT_OK
+    let trust = match args.trust {
+        Some(path) => match TrustedKeys::load(&path) {
+            Ok(trust) => Some(trust),
+            Err(error) => return fail(&error),
+        },
+        None => None,
+    };
+    let report = match verify_manifest(
+        &case_root,
+        &manifest_path,
+        args.signature.as_deref(),
+        trust.as_ref(),
+    ) {
+        Ok(report) => report,
+        Err(error) => return fail(&error),
+    };
+
+    let verified = report.is_accepted();
+    let (manifest_id, acquisition_id, format, objects_verified, total_bytes, captured, gaps) =
+        match &report.manifest {
+            ManifestStatus::Verified(result) => (
+                Some(result.manifest_id.clone()),
+                Some(result.acquisition_id.clone()),
+                Some(result.format.clone()),
+                Some(result.objects_verified),
+                Some(result.total_bytes),
+                Some(result.captured),
+                Some(result.gaps),
+            ),
+            ManifestStatus::Rejected { .. } => (None, None, None, None, None, None, None),
+        };
+    let (signature, signature_detail) = match &report.signature {
+        SignatureStatus::Absent => ("absent", None),
+        SignatureStatus::Valid => ("valid", None),
+        SignatureStatus::Invalid(reason) => ("invalid", Some(reason.clone())),
+    };
+    let key_trust = match report.key_trust {
+        KeyTrust::NotApplicable => "not_applicable",
+        KeyTrust::Untrusted => "untrusted",
+        KeyTrust::Trusted => "trusted",
+    };
+    let output_report = VerifyOutput {
+        verified,
+        manifest_id,
+        acquisition_id,
+        format,
+        objects_verified,
+        total_bytes,
+        captured,
+        gaps,
+        signed: !matches!(report.signature, SignatureStatus::Absent),
+        signature: signature.into(),
+        signature_detail,
+        key_trust: key_trust.into(),
+        key_fingerprint: report.key_fingerprint.clone(),
+        public_key: report.public_key.clone(),
+        capture_complete: report.capture_complete,
+        explanation: explain(&report),
+    };
+    output::emit_json(&output_report);
+
+    if verified {
+        return EXIT_OK;
+    }
+    let (code, detail) = match &report.manifest {
+        ManifestStatus::Rejected { code, detail } => (code.as_str(), detail.clone()),
+        ManifestStatus::Verified(_) => match &report.signature {
+            SignatureStatus::Invalid(reason) => ("integrity_mismatch", reason.clone()),
+            _ => ("integrity_mismatch", "verification failed".into()),
+        },
+    };
+    output::emit_error(code, &detail);
+    match code {
+        "integrity_mismatch" | "corrupt_evidence" | "unsupported_format" => EXIT_VERIFY,
+        _ => EXIT_FAILED,
+    }
+}
+
+/// One plain-language sentence combining the three independent statuses.
+fn explain(report: &ghosttrace_core::integrity::signature::SignedManifestVerification) -> String {
+    let mut parts = Vec::new();
+    match &report.manifest {
+        ManifestStatus::Verified(_) => {
+            parts.push("The stored object bytes match the manifest record.".to_string())
         }
-        Err(error) => {
-            output::emit_error(error.code(), &error.to_string());
-            match error {
-                CoreError::IntegrityMismatch
-                | CoreError::CorruptEvidence
-                | CoreError::Unsupported(_) => EXIT_VERIFY,
-                _ => EXIT_FAILED,
+        ManifestStatus::Rejected { .. } => {
+            parts.push("The stored bytes do not match the manifest record.".to_string())
+        }
+    }
+    match (&report.signature, report.key_trust) {
+        (SignatureStatus::Absent, _) => parts.push(
+            "No detached signature is present: this proves the bytes match the record, not who \
+             produced it."
+                .to_string(),
+        ),
+        (SignatureStatus::Valid, KeyTrust::Trusted) => parts
+            .push("The signature is valid and its key is in your trusted-key list.".to_string()),
+        (SignatureStatus::Valid, _) => parts.push(
+            "The signature is mathematically valid, but the key is not in your trusted-key list: \
+             it proves the bytes were signed by that key, not that the key is yours."
+                .to_string(),
+        ),
+        (SignatureStatus::Invalid(reason), _) => parts.push(format!(
+            "The signature does not cover these bytes: {reason}."
+        )),
+    }
+    match report.capture_complete {
+        Some(true) => parts.push(
+            "Capture completeness: no coverage gaps were recorded for the declared scope."
+                .to_string(),
+        ),
+        Some(false) => parts.push(
+            "Capture completeness: coverage gaps were recorded; the manifest is complete only for \
+             the captured scope."
+                .to_string(),
+        ),
+        None => {}
+    }
+    parts.join(" ")
+}
+
+fn key(args: KeyArgs) -> u8 {
+    match args.command {
+        KeyCommand::Generate(args) => {
+            let first = match prompt_new_passphrase() {
+                Ok(passphrase) => passphrase,
+                Err(code) => return code,
+            };
+            match generate_key_file(&args.out, first.as_bytes()) {
+                Ok(identity) => {
+                    output::emit_json(&KeyOutput {
+                        path: args.out.display().to_string(),
+                        public_key: identity.public_key,
+                        key_fingerprint: identity.key_fingerprint,
+                    });
+                    EXIT_OK
+                }
+                Err(error) => fail(&error),
+            }
+        }
+        KeyCommand::Import(args) => {
+            let source = match prompt_secret("Current key passphrase: ") {
+                Ok(passphrase) => passphrase,
+                Err(code) => return code,
+            };
+            let destination = match prompt_new_passphrase() {
+                Ok(passphrase) => passphrase,
+                Err(code) => return code,
+            };
+            match import_key_file(
+                &args.input,
+                &args.out,
+                source.as_bytes(),
+                destination.as_bytes(),
+            ) {
+                Ok(identity) => {
+                    output::emit_json(&KeyOutput {
+                        path: args.out.display().to_string(),
+                        public_key: identity.public_key,
+                        key_fingerprint: identity.key_fingerprint,
+                    });
+                    EXIT_OK
+                }
+                Err(error) => fail(&error),
+            }
+        }
+        KeyCommand::Public(args) => {
+            let passphrase = match prompt_secret("Key passphrase: ") {
+                Ok(passphrase) => passphrase,
+                Err(code) => return code,
+            };
+            match load_key_file(&args.key, passphrase.as_bytes()) {
+                Ok(key) => {
+                    let identity = key.identity();
+                    output::emit_json(&KeyOutput {
+                        path: args.key.display().to_string(),
+                        public_key: identity.public_key,
+                        key_fingerprint: identity.key_fingerprint,
+                    });
+                    EXIT_OK
+                }
+                Err(error) => fail(&error),
             }
         }
     }
+}
+
+fn sign(args: SignArgs) -> u8 {
+    let passphrase = match prompt_secret("Key passphrase: ") {
+        Ok(passphrase) => passphrase,
+        Err(code) => return code,
+    };
+    let key = match load_key_file(&args.key, passphrase.as_bytes()) {
+        Ok(key) => key,
+        Err(error) => return fail(&error),
+    };
+    let bytes = match std::fs::read(&args.manifest) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return fail(&CoreError::Storage(format!("manifest read: {error}")));
+        }
+    };
+    let envelope = SignatureEnvelope::sign(&bytes, &key);
+    let destination = args.out.unwrap_or_else(|| sidecar_path(&args.manifest));
+    match envelope.write_atomic(&destination) {
+        Ok(path) => {
+            output::emit_json(&SignOutput {
+                manifest: args.manifest.display().to_string(),
+                signature: path.display().to_string(),
+                algorithm: envelope.algorithm,
+                manifest_sha256: envelope.manifest_sha256,
+                public_key: envelope.public_key,
+                key_fingerprint: envelope.key_fingerprint,
+            });
+            EXIT_OK
+        }
+        Err(error) => fail(&error),
+    }
+}
+
+/// Read a secret from the terminal. Secrets never come from arguments or the
+/// environment, and the value is zeroized when it goes out of scope.
+fn prompt_secret(label: &str) -> Result<zeroize::Zeroizing<String>, u8> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        output::emit_error(
+            "invalid_request",
+            "passphrase prompts need a terminal; no passphrase was read",
+        );
+        return Err(EXIT_USAGE);
+    }
+    match rpassword::prompt_password(label) {
+        Ok(value) => Ok(zeroize::Zeroizing::new(value)),
+        Err(error) => {
+            output::emit_error(
+                "invalid_request",
+                &format!("cannot read the passphrase: {error}"),
+            );
+            Err(EXIT_USAGE)
+        }
+    }
+}
+
+fn prompt_new_passphrase() -> Result<zeroize::Zeroizing<String>, u8> {
+    let first = prompt_secret("New key passphrase: ")?;
+    let second = prompt_secret("Repeat passphrase: ")?;
+    if first.as_str() != second.as_str() {
+        output::emit_error("invalid_request", "the passphrases do not match");
+        return Err(EXIT_USAGE);
+    }
+    Ok(first)
 }
 
 fn report(args: ReportArgs) -> u8 {

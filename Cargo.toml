@@ -33,6 +33,11 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 evtx = { version = "0.13.0", default-features = false }
 crossterm = "0.29.0"
 uuid = { version = "1.28.0", features = ["v4"] }
+ed25519-dalek = { version = "3.0.0", features = ["pkcs8", "pem"] }
+pkcs8 = { version = "0.11.0", features = ["encryption", "getrandom", "pem", "pkcs5", "std"] }
+getrandom = "0.4"
+rpassword = "7.5.4"
+zeroize = "1.9.1"
 # Test-only tooling (plan Section 3); dev-dependencies inherit from this table.
 egui_kittest = "0.37.0"
 tempfile = "3.24.0"

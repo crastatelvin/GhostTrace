@@ -153,6 +153,15 @@ fn a_published_report_and_a_verification_result_are_shown() {
             total_bytes: 4_096,
             captured: 3,
             gaps: 1,
+            signature: "valid".into(),
+            signature_detail: None,
+            key_trust: "untrusted".into(),
+            key_fingerprint: Some("a".repeat(64)),
+            capture_complete: Some(false),
+            explanation: "The signature is mathematically valid, but the key is not in your \
+                          trusted-key list: it proves the bytes were signed by that key, not that \
+                          the key is yours."
+                .into(),
         },
     });
     assert_eq!(
@@ -165,6 +174,15 @@ fn a_published_report_and_a_verification_result_are_shown() {
             total_bytes: 4_096,
             captured: 3,
             gaps: 1,
+            signature: "valid".into(),
+            signature_detail: None,
+            key_trust: "untrusted".into(),
+            key_fingerprint: Some("a".repeat(64)),
+            capture_complete: Some(false),
+            explanation: "The signature is mathematically valid, but the key is not in your \
+                          trusted-key list: it proves the bytes were signed by that key, not that \
+                          the key is yours."
+                .into(),
         })
     );
 

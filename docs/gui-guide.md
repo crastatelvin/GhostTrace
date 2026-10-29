@@ -12,7 +12,8 @@ cargo run -p ghosttrace-desktop
 cargo run -p ghosttrace-desktop -- --renderer wgpu   # optional backend
 ```
 
-The default renderer is glow (see `docs/adr/0001-native-rust-ui.md`). With the
+P9.1 adds manifest signing and signature-aware verification to the "Report and
+verify" screen. The default renderer is glow (see `docs/adr/0001-native-rust-ui.md`). With the
 `screenshot` cargo feature and the glow renderer, `EFRAME_SCREENSHOT_TO=shot.png`
 writes one frame and exits.
 
@@ -249,3 +250,18 @@ silently.
   Orca smoke test failed on rootless Xwayland with an XKB error; that is an
   environment limitation, not an accessibility certification
   (`docs/releases.md`).
+
+**Report and verify screen (P9.1)**
+
+- Verification now reports three separate statuses: stored-object digests,
+  signature validity (`absent`/`valid`/`invalid`), and key trust
+  (`not_applicable`/`untrusted`/`trusted`), plus a capture-completeness line and
+  a one-sentence explanation. A valid signature from an unknown key is shown as
+  mathematically valid but untrusted; it is not hidden and it is not called a
+  failure.
+- Optional sidecar and trusted-key-list paths use the same files as the CLI.
+- The "Sign manifest" section signs the exact stored manifest bytes with an
+  encrypted key file. Entering a path that does not exist generates a new key
+  (mode `0600`, never overwritten). The passphrase is a password field, is moved
+  into the job, and is cleared immediately; it is never stored in the case or a
+  report. An existing sidecar is never replaced.

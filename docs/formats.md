@@ -401,3 +401,49 @@ without `timezone`, `weekdays`, `start`, and `end` the outside-hours rule stays
 predicates — a parameter changes thresholds and windows, never logic. The
 effective configuration digest is recorded with the analysis run, so a finding
 can be reproduced from its revision and parameter set.
+
+## Signing keys and detached signatures (P9.1)
+
+Signing uses standard formats only; there is no GhostTrace key container.
+
+**Private key file.** An encrypted PKCS#8 PEM (`-----BEGIN ENCRYPTED PRIVATE
+KEY-----`, RFC 5958) with PBES2, scrypt (log₂N 14, r 8, p 1) and AES-256-CBC,
+written by `pkcs8` 0.11 with OS randomness. The file is created with mode `0600`
+and never overwritten. The loader refuses:
+
+- symlinks, non-regular files, files larger than 64 KiB;
+- group/other-readable files and files owned by another user (Unix);
+- legacy PBES1 schemes (DES/RC2/MD2/MD5/SHA-1), non-AES-256-CBC ciphers;
+- scrypt cost above 2¹⁶, block size above 16, parallelism above 4;
+- PBKDF2 above 2,000,000 iterations or a PRF other than HMAC-SHA-256;
+- passphrases shorter than 8 bytes or longer than 1024 bytes.
+
+The public key is the 32-byte Ed25519 verifying key, lowercase hex. The key
+fingerprint is the SHA-256 of those 32 bytes, lowercase hex. Both are safe to
+publish; neither identifies a person.
+
+**Detached signature.** `<manifest>.sig.json`, stable pretty JSON with one
+trailing newline:
+
+```json
+{
+  "format": "ghosttrace-signature/1",
+  "algorithm": "ed25519",
+  "manifest_sha256": "<64 hex>",
+  "public_key": "<64 hex>",
+  "key_fingerprint": "<64 hex>",
+  "signature": "<128 hex>"
+}
+```
+
+The signature covers `b"GhostTrace manifest v1"` + `0x00` + the 32-byte SHA-256
+of the **complete manifest file**. Signing and verification hash the same bytes,
+so whitespace, ordering, entry, or digest changes invalidate the signature.
+Verification is strict (`verify_strict`), rejects unknown fields and duplicate
+JSON keys, and checks that the fingerprint matches the embedded public key.
+The sidecar never embeds the manifest and never contains the private key.
+
+**Trust.** A user-maintained text file outside the case: one lowercase or
+uppercase 64-character fingerprint per line, `#` comments and blank lines
+ignored, every other line rejected with its line number. Trust is a preference,
+not evidence, and it is excluded from portable case backups (P9.2).

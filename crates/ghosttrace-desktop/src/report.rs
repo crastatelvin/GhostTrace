@@ -95,6 +95,22 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
         &mut state.report.verify_acquisition,
         &open.acquisitions,
     );
+    labeled_text(
+        ui,
+        "Signature sidecar (optional)",
+        &mut state.report.signature_path,
+    );
+    ui.label("Default: <manifest>.sig.json when that file exists.");
+    labeled_text(
+        ui,
+        "Trusted-key list (optional)",
+        &mut state.report.trust_path,
+    );
+    ui.label(
+        "One 64-character key fingerprint per line. A valid signature from a key that is not in \
+         this list is reported as mathematically valid but untrusted; that is different from a \
+         signature that does not cover these bytes.",
+    );
     if ui.button("Verify manifest").clicked() {
         state.verify_case();
     }
@@ -111,6 +127,27 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
             result.captured,
             result.gaps
         ));
+        ui.label(format!(
+            "Signature: {} · key trust: {}{}",
+            result.signature,
+            result.key_trust,
+            result
+                .key_fingerprint
+                .as_deref()
+                .map(|fingerprint| format!(" · key {fingerprint}"))
+                .unwrap_or_default()
+        ));
+        if let Some(detail) = result.signature_detail.as_deref() {
+            ui.label(format!("Signature detail: {detail}"));
+        }
+        if let Some(complete) = result.capture_complete {
+            ui.label(if complete {
+                "Capture completeness: no coverage gaps recorded for the declared scope."
+            } else {
+                "Capture completeness: coverage gaps recorded; complete only for the captured scope."
+            });
+        }
+        ui.label(&result.explanation);
     }
 
     ui.horizontal(|ui| {
@@ -118,6 +155,33 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
             ui.spinner();
         }
         ui.label(&state.report.status);
+    });
+
+    ui.separator();
+    ui.heading("Sign manifest");
+    ui.label(
+        "Signs the exact stored manifest bytes with an encrypted Ed25519 key. If the key file \
+         does not exist yet it is generated (mode 0600, never overwritten). The passphrase is \
+         read from this field, moved into the job, and cleared; it is never stored in the case \
+         or a report. An existing signature sidecar is never replaced.",
+    );
+    labeled_text(ui, "Key file", &mut state.report.sign_key_path);
+    ui.horizontal(|ui| {
+        ui.label("Passphrase");
+        ui.add(
+            egui::TextEdit::singleline(&mut state.report.sign_passphrase)
+                .password(true)
+                .hint_text("at least 8 characters"),
+        );
+    });
+    if ui.button("Sign manifest").clicked() {
+        state.sign_case();
+    }
+    ui.horizontal(|ui| {
+        if state.report.signing {
+            ui.spinner();
+        }
+        ui.label(&state.report.sign_status);
     });
 }
 

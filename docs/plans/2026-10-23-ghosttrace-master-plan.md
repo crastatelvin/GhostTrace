@@ -1123,12 +1123,54 @@ the open accessibility/release-target items recorded in `docs/releases.md`.
 
 **Consumes:** Manifest v1 bytes. **Produces:** Detached signature protocol, encrypted key workflow, strict verification and explicit trust statuses.
 
-- [ ] Verify Ed25519 known vectors and the exact domain-separated digest message; whitespace/entry/digest tampering invalidates signature.
-- [ ] Test valid unknown key versus trusted key, unsupported algorithm/version, duplicate manifest keys, malformed encodings, and wrong passphrase.
-- [ ] Confirm compatible encrypted PKCS#8 feature support, secure randomness, private permissions/ACLs, passphrase prompting, and no secret diagnostics.
-- [ ] Implement key generation/import/sign/verify with existing standard cryptography and secret zeroization; keys never enter the case store or API.
-- [ ] Add GUI/CLI explanations for mathematical validity, key trust, and evidence completeness.
-- [ ] Commit: `feat: sign exact evidence manifests with explicit key trust`.
+- [x] Verify Ed25519 known vectors and the exact domain-separated digest message; whitespace/entry/digest tampering invalidates signature.
+  `signature_vectors.rs` checks RFC 8032 §7.1 TEST 1 (secret/public/signature)
+  and pins the exact signed message
+  (`b"GhostTrace manifest v1"` + NUL + SHA-256 of the complete manifest) with a
+  known-answer signature produced independently by
+  `openssl pkeyutl -sign -rawin` for the RFC key. The same test re-signs four
+  tampered variants (whitespace, version, extra entry, empty bytes) and asserts
+  `signature_valid = false` and `manifest_digest_matches = false` each time.
+- [x] Test valid unknown key versus trusted key, unsupported algorithm/version, duplicate manifest keys, malformed encodings, and wrong passphrase.
+  `manifest_trust.rs` covers a valid signature from an unknown key
+  (`valid`/`untrusted`, accepted), the same key in an explicit trust file
+  (`trusted`), an unrelated fingerprint (`untrusted`), a whitespace change
+  (`invalid`, exit 4 through the CLI), a tampered object (manifest
+  `integrity_mismatch` while the signature stays `valid`), `algorithm:
+  "rsa-pss"` and `format: "ghosttrace-signature/2"` (`unsupported_format`),
+  duplicate sidecar keys, malformed signature hex, a fingerprint that does not
+  match the embedded key, and a foreign signature over the same bytes
+  (`invalid`). `key_permissions.rs` covers the wrong passphrase without echoing
+  it.
+- [x] Confirm compatible encrypted PKCS#8 feature support, secure randomness, private permissions/ACLs, passphrase prompting, and no secret diagnostics.
+  Resolved `ed25519-dalek` 3.0.0 + `pkcs8` 0.11.0 with the `pkcs5`,
+  `encryption`, `getrandom`, `pem`, and `std` features; `pkcs8` 0.11 needs the
+  implicit `pkcs5` feature enabled explicitly. A generated key is asserted to be
+  PBES2 + scrypt + AES-256-CBC and mode `0600`, to contain neither the
+  passphrase nor a GhostTrace-specific container, and to be readable only after
+  `chmod 600`. Loading refuses group/other-readable files, symlinks, foreign
+  ownership, oversized files, PBES1, AES-128, and out-of-bound scrypt
+  parameters (unit tests in `integrity::keys`). Prompts use `rpassword` and
+  require a terminal; the CLI test pipes stdin and asserts exit 2 with no file
+  written. `Secret`/`UnlockedKey` `Debug` impls redact all secret material.
+- [x] Implement key generation/import/sign/verify with existing standard cryptography and secret zeroization; keys never enter the case store or API.
+  `integrity/keys.rs` generates from `getrandom`, writes an encrypted PKCS#8 PEM
+  with `create_new`, refuses paths containing a `*.ghosttrace-case` component,
+  and zeroizes the seed and PEM buffers; `ed25519-dalek` zeroizes the signing
+  key on drop. `integrity/signature.rs` defines the versioned sidecar,
+  strict verification (`verify_strict`, unknown-field and duplicate-key
+  rejection, fingerprint/key consistency), the strict trust-file parser, and
+  separate `ManifestStatus`/`SignatureStatus`/`KeyTrust` results. The CLI adds
+  `key generate|import|public`, `sign`, and `verify --signature/--trust`; no
+  key is reachable from the case store, reports, or any API.
+- [x] Add GUI/CLI explanations for mathematical validity, key trust, and evidence completeness.
+  `verify` emits `signature`, `signature_detail`, `key_trust`,
+  `key_fingerprint`, `public_key`, `capture_complete`, and a one-sentence
+  `explanation`; the desktop "Report and verify" screen shows the same fields
+  and adds a "Sign manifest" section whose password field is cleared when the
+  job starts. Both explanations distinguish a mathematically valid signature
+  from a trusted key and state whether coverage gaps were recorded.
+- [x] Commit: `feat: sign exact evidence manifests with explicit key trust`.
 
 #### P9.2 — Redaction, CSV safety, and consistent backup/restore
 
@@ -1242,7 +1284,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P7 | P7 | TUI and terminal safety | [x] |
 | P8 | P8.1 | EVTX adapters | [x] |
 | P8 | P8.2 | Isolated parser workers | [x] |
-| P9 | P9.1 | Signatures/standard private keys/trust | [ ] |
+| P9 | P9.1 | Signatures/standard private keys/trust | [x] |
 | P9 | P9.2 | Redacted packages/backup/restore | [ ] |
 | P10 | P10.1 | Fuzz/recovery/platform safety | [ ] |
 | P10 | P10.2 | Measured benchmark baselines | [ ] |
@@ -1251,6 +1293,27 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P12 | P12 | Optional read-only local API | [ ] |
 
 For each completed task, append: `Issue: real URL; PR: real URL; commit: actual SHA; verified: command(s), OS, result; reviewer: name; date: actual completion date`. Keep generated benchmark evidence and significant limitation decisions linked from the task. Use GitHub milestones for release gates and labels `area:capture`, `area:ingest`, `area:storage`, `area:gui`, `area:analysis`, `area:integrity`, `area:docs`, `type:bug`, `type:security`, `status:blocked`, `good-first-issue`, and `help-wanted`.
+
+### P9.1 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-29).
+- Signature tests: 5 (`signature_vectors.rs`), 9 (`key_permissions.rs`), 9
+  (`manifest_trust.rs`), 5 CLI (`cli_signature.rs`), plus the desktop job flow
+  signs through the real worker and re-verifies (`desktop_jobs.rs`).
+- Known answer: the RFC 8032 key signing
+  `b"GhostTrace manifest v1\0" || sha256(b"{\"format\":\"ghosttrace-manifest/1\"}\n")`
+  yields the signature produced independently by OpenSSL:
+  `b335b161…c44508`. The RFC 8032 TEST 1 signature over the empty message is
+  also reproduced exactly.
+- Formats verified rather than assumed: generated keys parse as PBES2 +
+  scrypt(log₂N 14, r 8, p 1) + AES-256-CBC, mode `0600`; loading a `0644` key or
+  a symlink fails; a wrong passphrase fails without echoing it; a piped
+  passphrase prompt exits 2 and writes nothing.
+- Open: passphrase buffers inside `rpassword` are outside our zeroization
+  control; zeroization cannot cover swap, crash dumps, or a compromised host.
+  Trust is a local preference file and is not part of a portable case (P9.2).
 
 ### P8.2 verification record
 

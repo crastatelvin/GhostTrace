@@ -1297,6 +1297,14 @@ pub struct VerifySummary {
     pub total_bytes: u64,
     pub captured: u64,
     pub gaps: u64,
+    /// `absent`, `valid`, or `invalid`.
+    pub signature: String,
+    pub signature_detail: Option<String>,
+    /// `not_applicable`, `untrusted`, or `trusted`.
+    pub key_trust: String,
+    pub key_fingerprint: Option<String>,
+    pub capture_complete: Option<bool>,
+    pub explanation: String,
 }
 
 /// Report export and manifest verification state (P6.4).
@@ -1311,9 +1319,18 @@ pub struct ReportState {
     pub last: Option<ReportSummary>,
     pub manifest_path: String,
     pub verify_acquisition: Option<String>,
+    pub signature_path: String,
+    pub trust_path: String,
     pub verification: Option<VerifySummary>,
     pub status: String,
     pub verifying: bool,
+    /// Encrypted key file used by the sign action.
+    pub sign_key_path: String,
+    /// Passphrase for one sign action. Cleared as soon as the job starts and
+    /// never written anywhere else.
+    pub sign_passphrase: String,
+    pub sign_status: String,
+    pub signing: bool,
 }
 
 impl Default for ReportState {
@@ -1333,9 +1350,15 @@ impl ReportState {
             last: None,
             manifest_path: String::new(),
             verify_acquisition: None,
+            signature_path: String::new(),
+            trust_path: String::new(),
             verification: None,
             status: "no report exported yet".into(),
             verifying: false,
+            sign_key_path: String::new(),
+            sign_passphrase: String::new(),
+            sign_status: "no manifest signed yet".into(),
+            signing: false,
         }
     }
 
@@ -1346,6 +1369,8 @@ impl ReportState {
         self.last = None;
         self.verification = None;
         self.verifying = false;
+        self.sign_status = "no manifest signed yet".into();
+        self.signing = false;
         self.status = if acquisitions.is_empty() {
             "record a capture before exporting a report".into()
         } else {
@@ -1715,6 +1740,8 @@ impl AppState {
         };
         let manifest_path = non_empty(&self.report.manifest_path);
         let acquisition_id = self.report.verify_acquisition.clone();
+        let signature_path = non_empty(&self.report.signature_path);
+        let trust_path = non_empty(&self.report.trust_path);
         self.report.verifying = true;
         self.report.status = "verifying stored bytes…".into();
         self.start(|id| Command::Verify {
@@ -1722,6 +1749,45 @@ impl AppState {
             case_directory,
             manifest_path,
             acquisition_id,
+            signature_path,
+            trust_path,
+        });
+    }
+
+    /// Sign the exact stored bytes of one manifest. The passphrase is moved
+    /// into the job and the text field is cleared immediately; nothing is
+    /// written to the case or any log.
+    pub fn sign_case(&mut self) {
+        if self.is_running() {
+            self.notice_error("a job is already running; cancel it before signing");
+            return;
+        }
+        let Some(case_directory) = self.case_directory() else {
+            self.notice_error("open a case before signing a manifest");
+            return;
+        };
+        if self.report.sign_key_path.trim().is_empty() {
+            self.notice_error("enter the path of the signing key file");
+            return;
+        }
+        if self.report.sign_passphrase.is_empty() {
+            self.notice_error("enter the key passphrase");
+            return;
+        }
+        let manifest_path = non_empty(&self.report.manifest_path);
+        let acquisition_id = self.report.verify_acquisition.clone();
+        let key_path = self.report.sign_key_path.clone();
+        let passphrase =
+            crate::commands::Secret::new(std::mem::take(&mut self.report.sign_passphrase));
+        self.report.signing = true;
+        self.report.sign_status = "signing manifest…".into();
+        self.start(|id| Command::Sign {
+            id,
+            case_directory,
+            manifest_path,
+            acquisition_id,
+            key_path,
+            passphrase,
         });
     }
 
@@ -1859,6 +1925,9 @@ impl AppState {
                 if phase == JobPhase::Verify {
                     self.report.verifying = false;
                     self.report.status = format!("verification failed: {code}: {message}");
+                } else if phase == JobPhase::Sign {
+                    self.report.signing = false;
+                    self.report.sign_status = format!("signing failed: {code}: {message}");
                 } else if phase == JobPhase::Report {
                     self.report.status = format!("export failed: {code}: {message}");
                 }
@@ -2072,15 +2141,30 @@ impl AppState {
                 total_bytes,
                 captured,
                 gaps,
+                signature,
+                signature_detail,
+                key_trust,
+                key_fingerprint,
+                capture_complete,
+                explanation,
             } => {
-                self.job.message = format!("manifest {manifest_id} verified");
-                self.notice_info(format!(
-                    "manifest {manifest_id} verified: {objects} object(s), {total_bytes} byte(s)"
-                ));
+                let accepted = signature != "invalid";
+                self.job.message = if accepted {
+                    format!("manifest {manifest_id} verified")
+                } else {
+                    format!("manifest {manifest_id}: signature rejected")
+                };
+                if accepted {
+                    self.notice_info(format!(
+                        "manifest {manifest_id} verified: {objects} object(s), {total_bytes} byte(s)"
+                    ));
+                } else {
+                    self.notice_error(format!(
+                        "manifest {manifest_id}: the signature does not cover these bytes"
+                    ));
+                }
                 self.report.verifying = false;
-                self.report.status = format!(
-                    "manifest {manifest_id} verified: {objects} stored object(s) match their recorded digests"
-                );
+                self.report.status = format!("manifest {manifest_id}: {explanation}");
                 self.report.verification = Some(VerifySummary {
                     manifest_id,
                     acquisition_id,
@@ -2089,7 +2173,31 @@ impl AppState {
                     total_bytes,
                     captured,
                     gaps,
+                    signature,
+                    signature_detail,
+                    key_trust,
+                    key_fingerprint,
+                    capture_complete,
+                    explanation,
                 });
+            }
+            Outcome::Signed {
+                manifest,
+                signature,
+                public_key,
+                key_fingerprint,
+            } => {
+                self.job.message = "manifest signed".into();
+                self.notice_info(format!(
+                    "signature written: {signature} (key {})",
+                    &key_fingerprint[..16.min(key_fingerprint.len())]
+                ));
+                self.report.signing = false;
+                self.report.sign_status = format!(
+                    "signed {manifest} · sidecar {signature} · key {}… · public key {}",
+                    &key_fingerprint[..16.min(key_fingerprint.len())],
+                    &public_key[..16.min(public_key.len())]
+                );
             }
         }
     }

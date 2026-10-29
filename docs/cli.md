@@ -232,20 +232,99 @@ each object's byte length and digest, and the object path is its digest.
 
 ## `verify`
 
-Re-reads one acquisition manifest and re-hashes every stored object. Unsigned
-integrity check only: it proves the stored bytes still match the record.
+Re-reads one acquisition manifest, re-hashes every stored object, and checks the
+detached signature when one is present or named. The three statuses are
+reported separately: object digests, signature validity, and key trust.
 
 ```bash
 ghosttrace verify --case <DIR>.ghosttrace-case
 ghosttrace verify --case … --acquisition <ID>
 ghosttrace verify --case … --manifest <FILE>
+ghosttrace verify --case … --signature <FILE> --trust <FILE>
 ```
 
-Success prints `{"verified":true,…}` and exits `0`. Any of tampered bytes
-(`integrity_mismatch`), a missing object (`corrupt_evidence`), duplicate JSON
-keys, an unsupported format version, duplicate object references, or a store
-path escaping `objects/sha256/` exits `4`. Recorded coverage gaps do not fail
-verification. See [reports.md](reports.md) for the full rule table.
+Without `--signature`, the sidecar `<manifest>.sig.json` is used when it
+exists; naming a missing sidecar is an error, never "absent". `--trust` is a
+user-maintained text file with one 64-character key fingerprint per line
+(`#` comments and blank lines allowed). Trust lives outside the case and is
+never written into it.
+
+Success prints one JSON line:
+
+```json
+{"verified":true,"manifest_id":"manifest-acq-…","acquisition_id":"acq-…",
+ "format":"ghosttrace-manifest/1","objects_verified":3,"total_bytes":22,
+ "captured":3,"gaps":0,"signed":true,"signature":"valid",
+ "key_trust":"untrusted","key_fingerprint":"…","public_key":"…",
+ "capture_complete":true,"explanation":"…"}
+```
+
+`signature` is `absent`, `valid`, or `invalid`; `key_trust` is
+`not_applicable`, `untrusted`, or `trusted`. A **valid signature from an unknown
+key is not a failure**: it proves the bytes were signed by that key, not that
+the key is yours. `explanation` states the same thing in one sentence, including
+whether coverage gaps were recorded.
+
+Exit codes: `0` accepted, `4` the manifest did not verify or the signature does
+not cover these bytes, `1` the file or case could not be read, `2` invalid
+usage.
+
+Verification fails closed on:
+
+| Condition | Machine code |
+| --- | --- |
+| any stored object's bytes differ from its digest | `integrity_mismatch` |
+| a referenced object is missing from the store | `corrupt_evidence` |
+| malformed JSON, duplicate JSON keys, unknown format version | `unsupported_format` |
+| duplicate object IDs or store paths | `unsupported_format` |
+| a `store_subpath` outside `objects/sha256/<bucket>/<hex>` | `unsupported_format` |
+| a signature that does not cover the exact manifest bytes | `integrity_mismatch` |
+| unsupported signature format/algorithm, malformed hex, fingerprint mismatch | `unsupported_format` |
+
+Recorded coverage gaps (`gaps > 0`) do **not** fail verification: they are part
+of the honest record, not tampering. A cancelled acquisition writes no manifest;
+verifying it reports a missing file. A signature proves the bytes were signed by
+a key. It cannot prove when collection occurred, that the host was truthful, or
+that custody was legally sufficient.
+
+## `sign`
+
+Signs the exact bytes of a stored manifest with an encrypted Ed25519 key. The
+passphrase is read from the terminal, never from an argument or the environment.
+
+```bash
+ghosttrace sign --manifest <CASE>/manifests/manifest-acq-….json --key ~/keys/signing.pem
+ghosttrace sign --manifest … --key … --out /elsewhere/manifest.sig.json
+```
+
+The default sidecar is `<manifest>.sig.json`; an existing sidecar is never
+overwritten. The signed message is the ASCII domain `GhostTrace manifest v1`,
+one NUL byte, then the SHA-256 of the complete manifest file. Any whitespace,
+entry, or digest change therefore invalidates the old signature. The sidecar
+records the format, algorithm, manifest digest, public key, key fingerprint, and
+signature — never the manifest or the private key.
+
+## `key`
+
+```bash
+ghosttrace key generate --out ~/keys/signing.pem
+ghosttrace key import --in old.pem --out ~/keys/signing.pem
+ghosttrace key public --key ~/keys/signing.pem
+```
+
+`generate` prompts twice for a new passphrase (at least 8 bytes) and writes a
+standard encrypted PKCS#8 PEM (PBES2 with scrypt, AES-256-CBC) created with mode
+`0600`. An existing file is never overwritten and a key may not be written
+inside a case directory. `import` decrypts an existing encrypted PKCS#8 key and
+re-encrypts it under a new passphrase. `public` prints the public key and
+fingerprint; the private key never leaves memory unencrypted.
+
+The loader refuses symlinks, group/other-readable files, files owned by another
+user, oversized key files, legacy PBES1 schemes, non-AES-256-CBC ciphers, and
+KDF parameters above the accepted bounds. Zeroization covers the in-memory key
+and passphrase buffers; it cannot protect against swap, crash dumps, or a
+compromised host. Passphrase prompts require a terminal: piping stdin is
+refused before any key is created or read.
 
 ## `report`
 

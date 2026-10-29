@@ -3,8 +3,11 @@
 Two commands close the loop on a captured case:
 
 - `ghosttrace verify` re-reads a stored acquisition manifest and re-hashes the
-  stored objects. It is an **unsigned integrity check**: it proves the bytes
-  still match the record, not who produced the record.
+  stored objects. When a detached signature is present it also checks the exact
+  manifest bytes and reports signature validity and key trust separately. An
+  unsigned check proves the bytes still match the record, not who produced the
+  record; a valid signature from a key that is not in your trusted list proves
+  only that the key signed those bytes.
 - `ghosttrace report` exports a versioned JSON report and a self-contained HTML
   view built only from the recorded case.
 
@@ -17,7 +20,11 @@ resolves a URL.
 ghosttrace verify --case /cases/investigation.ghosttrace-case
 ghosttrace verify --case … --acquisition acq-…
 ghosttrace verify --case … --manifest /cases/investigation.ghosttrace-case/manifests/manifest-acq-….json
+ghosttrace verify --case … --trust ~/trusted-keys.txt
 ```
+
+Signing is documented in [cli.md](cli.md#sign) and the sidecar/key formats in
+[formats.md](formats.md#signing-keys-and-detached-signatures-p91).
 
 Without `--manifest`, the command verifies the manifest of `--acquisition`, or
 of the newest acquisition. Success prints one JSON line:
@@ -40,6 +47,8 @@ Verification fails closed on:
 | malformed JSON, duplicate JSON keys, unknown format version | `unsupported_format` |
 | duplicate object IDs or store paths | `unsupported_format` |
 | a `store_subpath` outside `objects/sha256/<bucket>/<hex>` | `unsupported_format` |
+| a signature that does not cover the exact manifest bytes | `integrity_mismatch` |
+| unsupported signature format/algorithm, malformed hex, fingerprint mismatch | `unsupported_format` |
 
 Recorded coverage gaps (`gaps > 0`) do **not** fail verification: they are part
 of the honest record, not tampering. A cancelled acquisition writes no manifest;

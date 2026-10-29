@@ -225,9 +225,15 @@ impl ManifestV1 {
     pub fn verify_file(path: &Path, case_root: &Path) -> CoreResult<ManifestVerification> {
         let text = std::fs::read_to_string(path)
             .map_err(|error| CoreError::Storage(format!("manifest read: {error}")))?;
-        reject_duplicate_keys(&text)?;
+        Self::verify_bytes(&text, case_root)
+    }
 
-        let header: serde_json::Value = serde_json::from_str(&text)
+    /// Verify already-read manifest text. Signature verification hashes the
+    /// same bytes, so it calls this instead of re-reading the file.
+    pub fn verify_bytes(text: &str, case_root: &Path) -> CoreResult<ManifestVerification> {
+        reject_duplicate_keys(text)?;
+
+        let header: serde_json::Value = serde_json::from_str(text)
             .map_err(|error| CoreError::Unsupported(format!("manifest json: {error}")))?;
         match header.get("format").and_then(|value| value.as_str()) {
             Some(MANIFEST_FORMAT) => {}

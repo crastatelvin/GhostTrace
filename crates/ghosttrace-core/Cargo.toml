@@ -18,6 +18,10 @@ toml.workspace = true
 evtx.workspace = true
 uuid.workspace = true
 nix.workspace = true
+ed25519-dalek.workspace = true
+pkcs8.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
