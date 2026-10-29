@@ -1,0 +1,11 @@
+{"ts":"2026-03-02T09:00:00Z","kind":"auth.login_failed","host":"web-01","service":"sshd","user":"alice","ip":"10.0.0.5","msg":"Failed password for alice from 10.0.0.5 port 51022 ssh2"}
+{"ts":"2026-03-02T09:00:30Z","kind":"auth.login_failed","host":"web-01","service":"sshd","user":"alice","ip":"10.0.0.5","msg":"Failed password for alice from 10.0.0.5 port 51024 ssh2"}
+{"ts":"2026-03-02T09:01:00Z","kind":"auth.login_failed","host":"web-01","service":"sshd","user":"alice","ip":"10.0.0.5","msg":"Failed password for alice from 10.0.0.5 port 51026 ssh2"}
+{"ts":"2026-03-02T09:01:30Z","kind":"auth.login_failed","host":"web-01","service":"sshd","user":"alice","ip":"10.0.0.5","msg":"Failed password for alice from 10.0.0.5 port 51028 ssh2"}
+{"ts":"2026-03-02T09:02:00Z","kind":"auth.login_failed","host":"web-01","service":"sshd","user":"alice","ip":"10.0.0.5","msg":"Failed password for alice from 10.0.0.5 port 51030 ssh2"}
+{"ts":"2026-03-02T09:02:40Z","kind":"auth.login_succeeded","host":"web-01","service":"sshd","user":"alice","ip":"10.0.0.5","msg":"Accepted password for alice from 10.0.0.5 port 51032 ssh2"}
+{"ts":"2026-03-02T09:03:10Z","kind":"browser.download","host":"web-01","user":"alice","path":"/home/alice/Downloads/tool.zip","msg":"download completed: tool.zip"}
+{"ts":"2026-03-02T09:04:00Z","kind":"process.execute","host":"web-01","user":"alice","path":"/home/alice/Downloads/tool.zip","msg":"executed /home/alice/Downloads/tool.zip"}
+{"ts":"2026-03-02T09:04:30Z","kind":"file.write","host":"web-01","user":"alice","path":"/home/alice/.local/share/tool/state.db","msg":"wrote state.db"}
+{"ts":"2026-03-02T09:05:00Z","kind":"file.read","host":"web-01","user":"alice","path":"/srv/config/app.yaml","msg":"read app.yaml"}
+{"ts":"2026-03-02T09:05:30Z","kind":"file.read","host":"web-01","user":"alice","path":"/srv/config/app.yaml","msg":"read app.yaml again"}

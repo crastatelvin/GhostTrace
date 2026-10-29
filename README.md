@@ -11,13 +11,16 @@ instead of silently converting gaps into results.
 
 ## Status
 
-**Early development.** P0 (stack feasibility), P1 (evidence model, lossless
-paths and timestamps, transactional case storage, shared query service), and
-P2 (safe capture, streaming copy/hash, recovery, and the `case`/`scan`/`status`
-CLI) are complete. The tool can capture a folder into a verifiable case today;
-timeline parsing and analysis arrive with P3+. See
-`docs/plans/2026-10-23-ghosttrace-master-plan.md` for the full phased plan and
-current tracker, and `docs/releases.md` for the verified platform baseline.
+**Pre-1.0, Linux x86_64 verified.** P0–P10 are complete: safe capture, JSONL /
+syslog / journal-export / browser-history / EVTX import, the indexed timeline,
+search, coverage-aware diff, scoped entities and bounded relationships, five
+explainable rules with notes and saved views, the native desktop workbench, the
+terminal UI, Ed25519 signing, redacted reports and verifiable packages,
+backup/restore, fuzzing and crash recovery, and measured performance baselines.
+P11 (verified release distributions) is next. Windows and macOS are intended
+targets but unverified; see `docs/releases.md` for the platform matrix and
+known gaps. The phased plan and tracker are in
+`docs/plans/2026-10-23-ghosttrace-master-plan.md`.
 
 | Release | Deliverable |
 |---|---|
@@ -29,25 +32,54 @@ current tracker, and `docs/releases.md` for the verified platform baseline.
 
 These identifiers describe gates, not deadlines.
 
-## Alpha workflow (CLI)
+## Workflow (CLI)
 
 ```bash
-cargo build --workspace --locked
-./target/debug/ghosttrace case create --case /cases/demo.ghosttrace-case --label demo
-./target/debug/ghosttrace scan --case /cases/demo.ghosttrace-case --source /evidence/export
-./target/debug/ghosttrace status --case /cases/demo.ghosttrace-case
-./target/debug/ghosttrace timeline --case /cases/demo.ghosttrace-case --last 24h
-./target/debug/ghosttrace diff --case /cases/demo.ghosttrace-case --before <ACQ> --after <ACQ>
+cargo build --workspace --locked --release
+export PATH="$PWD/target/release:$PATH"
+
+ghosttrace case create --case /cases/demo.ghosttrace-case --label demo
+ghosttrace scan --case /cases/demo.ghosttrace-case --source /evidence/export
+ghosttrace import --case /cases/demo.ghosttrace-case --path logs/app.jsonl \
+  --format jsonl --time-field ts --kind-field kind --host-field host --message-field msg
+ghosttrace timeline --case /cases/demo.ghosttrace-case --last 24h
+ghosttrace analyze --case /cases/demo.ghosttrace-case
+ghosttrace report --case /cases/demo.ghosttrace-case --output /cases/reports --csv
 ```
 
 `scan` copies and hashes every file it can access, records each omission with a
 stable code, and writes an acquisition manifest. Exit `0` means no material
 omission, `3` means the result is partial or was cancelled, `1` means the
-operation failed, `2` means invalid usage. Prefer capturing from a protected
-copy; `--method live-best-effort` is explicitly best effort and the warning is
-printed where the choice is made. Reading files may affect access-time
-metadata; that effect is disclosed, not asserted absent. Full details:
-`docs/cli.md`.
+operation failed, `2` means invalid usage, `4` means verification failed.
+Prefer capturing from a protected copy; `--method live-best-effort` is
+explicitly best effort and the warning is printed where the choice is made.
+Reading files may affect access-time metadata; that effect is disclosed, not
+asserted absent.
+
+Run the ten-minute [folder walkthrough](docs/walkthrough.md), or the two tracked
+synthetic investigations in [`samples/`](samples/README.md) (failed logons →
+success → process/file activity; two snapshots with misleading metadata and a
+coverage gap).
+
+## Documentation
+
+| Guide | Contents |
+|---|---|
+| [Installation](docs/installation.md) | build, release archive, first case, upgrades, licensing, custody |
+| [Quickstart](docs/quickstart.md) | prerequisites, checks, desktop build |
+| [CLI](docs/cli.md) | every command, output contract, exit codes, TUI keys |
+| [Desktop](docs/gui-guide.md) | screens, keyboard, accessibility, measured responsiveness |
+| [Verification and reports](docs/reports.md) | manifests, signatures, redaction, HTML/CSV |
+| [Samples](samples/README.md) | two tracked synthetic investigations |
+| [Limitations](docs/limitations.md) | unsupported formats, custody, platform, performance |
+| [Troubleshooting](docs/troubleshooting.md) | permissions, WAL, schema, time, signatures, backup |
+| [Formats](docs/formats.md) | mappings, bounds, rule parameters, signing formats |
+| [Timestamps](docs/timestamps.md) | statuses, zones, precision versus accuracy |
+| [Storage](docs/storage.md) | schema, revisions, jobs, recovery |
+| [Performance](docs/performance.md) | measured baselines and the narrowed ingest target |
+| [Testing](docs/testing.md) | fuzz, recovery, dependency, and platform matrix |
+| [Threat model](docs/threat-model.md) | trust boundaries and claims not made |
+| [Releases](docs/releases.md) | verified environment and known gaps |
 
 ## License
 

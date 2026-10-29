@@ -37,8 +37,9 @@ b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060  evidence/notes
 
 ```bash
 ghosttrace case create --case "$WORK/case.ghosttrace-case" --label walkthrough
-ghosttrace scan --case "$WORK/case.ghosttrace-case" \
-  --source "$WORK/evidence" --claimed-source "demo folder"
+export FIRST=$(ghosttrace scan --case "$WORK/case.ghosttrace-case" \
+  --source "$WORK/evidence" --claimed-source "demo folder" 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["acquisition_id"])')
 ```
 
 Expected create output: `case_id:"case"`, `display_timezone:"UTC"`.
@@ -52,12 +53,8 @@ Expected scan output (IDs and times differ):
  "gaps":[],"manifest":"manifest-acq-….json"}
 ```
 
-Save the acquisition ID:
-
-```bash
-export FIRST=$(ghosttrace status --case case.ghosttrace-case \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["acquisitions"][0]["id"])')
-```
+Save the acquisition ID in `FIRST` as shown; the next scan is captured in
+`SECOND` the same way.
 
 ## 3. Change the scene (1 minute)
 
@@ -79,10 +76,9 @@ b6a98d9ce9a2d9149288fa3df42d377c3e42737afdcdaf714e33c0a100b51060  evidence/notes
 ## 4. Second capture (1 minute)
 
 ```bash
-ghosttrace scan --case "$WORK/case.ghosttrace-case" \
-  --source "$WORK/evidence" --claimed-source "demo folder"
-export SECOND=$(ghosttrace status --case case.ghosttrace-case \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["acquisitions"][1]["id"])')
+export SECOND=$(ghosttrace scan --case "$WORK/case.ghosttrace-case" \
+  --source "$WORK/evidence" --claimed-source "demo folder" 2>/dev/null \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["acquisition_id"])')
 ```
 
 Expected: `objects:3`, `bytes:22`, `captured:3`, `gaps:[]`, exit `0`.

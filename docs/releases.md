@@ -17,14 +17,18 @@ platform matrix document, not a release announcement.
 
 | Target | CLI/TUI | Desktop | Verification status |
 |---|---|---|---|
-| Linux x86_64 | planned | planned | **Build + run verified on this host** (glow default) |
+| Linux x86_64 | verified | verified | **Build + run verified on this host** (glow default; CLI, TUI, and measured GUI frame test) |
 | Windows x86_64 | planned | planned | Not verified; re-run renderer choice there |
 | macOS arm64 | planned | planned | Not verified; re-run renderer choice there |
 | Linux arm64 / macOS x86_64 | planned | planned | Not verified |
 
 "Build + run verified" means the P0.1 pilot built and ran with observable frame
-pacing and a background job; it is not a claim about forensic capability or
-release packaging.
+pacing and a background job, and later phases added the CLI/TUI workflows and
+the P10.2 measurements on the same host. It is not a claim about Windows/macOS
+capability or release packaging. Installation, first-run, and troubleshooting
+steps are in [installation.md](installation.md) and
+[troubleshooting.md](troubleshooting.md); the claims GhostTrace does not make
+are in [limitations.md](limitations.md).
 
 ## Build prerequisites (source)
 

@@ -12,6 +12,17 @@ file records implemented capability only.
 
 ### Added
 
+- P10.3 (2026-10-29): complete offline user and contributor documentation —
+  installation, first-run, upgrade, licensing, and custody guide
+  (`docs/installation.md`), troubleshooting for permissions, WAL, schema, time,
+  signatures, backup/restore, TUI, desktop, and large cases
+  (`docs/troubleshooting.md`), an explicit limitations page covering
+  acquisition, formats, analysis, custody, platform, accessibility,
+  performance, and network (`docs/limitations.md`), and two tracked synthetic
+  sample investigations (`samples/`): failed logons → success → process/file
+  activity, and two captures with misleading metadata plus an unreadable path
+  that stays `unknown`. README, quickstart, CLI, walkthrough, and platform
+  matrix now point at the tested commands and the verified platform.
 - P10.2 (2026-10-29): measured capture, ingest, query, graph, backup, and GUI
   baselines on a reproducible corpus (`docs/performance.md`), plus three
   fixes the measurements exposed: progress upserts no longer update the

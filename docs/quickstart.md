@@ -1,9 +1,10 @@
 # Quickstart
 
-This guide builds GhostTrace from source and runs the documented checks. It
-covers the P0 state: the storage/runtime stack is verified, but no forensic
-feature exists yet — the first commands here prove the workspace, not an
-investigation.
+This guide builds GhostTrace from source and runs the documented checks. For
+release archives, first-case guidance, upgrades, and licensing, see
+[installation.md](installation.md). For complete synthetic investigations, see
+[`samples/`](../samples/README.md) and the
+[folder walkthrough](walkthrough.md).
 
 ## Prerequisites
 

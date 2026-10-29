@@ -1295,11 +1295,11 @@ tasks and the open accessibility/release-target items.
 
 **Consumes:** Actual implemented support and test evidence. **Produces:** Offline usable help and accurate release docs.
 
-- [ ] Write installation/build/GUI/CLI/TUI/verification/backup/limitations guides and troubleshooting for permissions/WAL/schema/time/signatures.
-- [ ] Ship two synthetic sample investigations: failed logons → success → supported file/process activity; two snapshots with misleading metadata and incomplete coverage.
-- [ ] Test every documented command from a fresh checkout and binaries; examples reference tracked synthetic data only.
-- [ ] Explain signatures/custody, acquisition limitations, licensing, free versus optional paid signing, and unsupported forensic formats.
-- [ ] Commit: `docs: publish complete offline investigation and contributor guides`.
+- [x] Write installation/build/GUI/CLI/TUI/verification/backup/limitations guides and troubleshooting for permissions/WAL/schema/time/signatures.
+- [x] Ship two synthetic sample investigations: failed logons → success → supported file/process activity; two snapshots with misleading metadata and incomplete coverage.
+- [x] Test every documented command from a fresh checkout and binaries; examples reference tracked synthetic data only.
+- [x] Explain signatures/custody, acquisition limitations, licensing, free versus optional paid signing, and unsupported forensic formats.
+- [x] Commit: `docs: publish complete offline investigation and contributor guides`.
 
 **Gate:** No advertised capability lacks a task, fixture, test, documentation, and actual result. Failed performance/accessibility claims are fixed or narrowed before release.
 
@@ -1364,7 +1364,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P9 | P9.2 | Redacted packages/backup/restore | [x] |
 | P10 | P10.1 | Fuzz/recovery/platform safety | [x] |
 | P10 | P10.2 | Measured benchmark baselines | [x] |
-| P10 | P10.3 | Complete docs/sample investigations | [ ] |
+| P10 | P10.3 | Complete docs/sample investigations | [x] |
 | P11 | P11 | Verified release distributions | [ ] |
 | P12 | P12 | Optional read-only local API | [ ] |
 
@@ -1383,6 +1383,37 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
 - Open: Windows/macOS failure injection, NVDA/VoiceOver, and native terminal
   smoke checks need their own hosts and remain P10/P11 gate items. Advisory
   scanning needs network and is scheduled rather than blocking every push.
+
+### P10.3 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-29) after the documentation changes.
+- Documentation set: `docs/installation.md` (build, release archive, first
+  case, upgrades, licensing, custody), `docs/troubleshooting.md` (permissions,
+  WAL/locks, schema/migration, time, signatures, backup/restore, TUI, desktop,
+  scale), `docs/limitations.md` (acquisition, formats, analysis, custody,
+  platform, accessibility, performance, network). README, quickstart, CLI,
+  walkthrough, and the platform matrix now point at these and at actual
+  support. A relative-link check over 22 Markdown files found no missing
+  targets.
+- Samples: `samples/failed-logon-timeline` imports 11 tracked JSONL events and
+  produces exactly two findings (`auth.fail_then_success` and
+  `process.download_then_execute`), with the other three rules
+  `not_evaluated` and reasons; report export and verification pass.
+  `samples/misleading-snapshots` captures the same folder twice and reports
+  `metadata_changed:1`, `content_changed_equal_metadata:1`, `appeared:1`,
+  `move_candidates:2`, `unknown:1`, `not_present_in_captured_scope:0`; the
+  second capture is partial (`secret.txt`, `open_failed`) and verification
+  accepts it with `capture_complete:false`. Both use tracked synthetic data
+  only.
+- Fresh-copy run (release build, 3m31s): both samples, the ten-minute
+  walkthrough, and the report/verify steps pass; every documented `ghosttrace`
+  subcommand responds to `--help`; `tui` exits `2` with no TTY and writes no
+  ANSI bytes; `xtask package` produces an archive whose `.sha256` verifies,
+  extracts, and runs both binaries reporting `0.1.0-alpha.1`.
+- Open: live NVDA/VoiceOver/Orca sessions and Windows/macOS terminal smoke
+  checks remain P11 gate items; the docs state only Linux x86_64 as tested.
 
 ### P10.2 verification record
 

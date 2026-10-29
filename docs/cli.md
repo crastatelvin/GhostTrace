@@ -577,3 +577,19 @@ failed, `2` stdin/stdout is not a terminal or the arguments are invalid.
 
 The TUI does not capture, import, export, or annotate: those stay explicit CLI
 or desktop actions. Mouse input is not required for any view.
+
+## Synthetic samples
+
+Two tracked, reproducible investigations exercise the commands above without
+real evidence:
+
+- [`samples/failed-logon-timeline/`](../samples/failed-logon-timeline/README.md)
+  — JSONL import, exact timeline/search filters, two rule findings, honest
+  `not_evaluated` outcomes, report export, verification.
+- [`samples/misleading-snapshots/`](../samples/misleading-snapshots/README.md)
+  — two captures of one folder, equal-metadata content change, move candidates,
+  and a coverage gap that stays `unknown`.
+
+Both build a scratch case under `/tmp` and reference only tracked synthetic
+data. If a command in this guide fails, see
+[troubleshooting.md](troubleshooting.md) before opening an issue.
