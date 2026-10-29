@@ -164,6 +164,13 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P10.1 (2026-10-29): bounded fuzz targets on the time, native-path, manifest,
+  CSV/display, and worker-frame boundaries; a strict native-path decoder
+  regression (non-ASCII encoded text is rejected, not truncated); crash
+  recovery tests for unwritable output, abandoned staging, impossible disk
+  reserve, truncated databases, and corrupted objects; `xtask deps` license
+  allowlist plus optional `cargo-audit`; scheduled security workflow; a
+  threat-model document; and removal of unused `tokio`/`tracing` dependencies.
 - P9.2 (2026-10-29): redacted exports, spreadsheet-safe CSV, portable packages,
   and verified backup/restore — `report --redact`/`--csv` publishes a projection
   with a value-free `redaction.json` ledger (field names and counts only) while

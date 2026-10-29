@@ -1,6 +1,7 @@
 //! GhostTrace xtask: reproducible checks and fixture tooling (plan P0.2).
 
 mod check;
+mod deps;
 mod fixtures;
 mod package;
 
@@ -11,6 +12,8 @@ use clap::Parser;
 enum Cli {
     /// Run the documented check battery (format, lint, tests, features, policy).
     Check,
+    /// Check dependency licenses (offline) and advisories (when cargo-audit is installed).
+    Deps,
     /// Verify the tracked fixture catalog (digests, licenses, safety).
     Fixtures {
         /// Verify the fixture catalog against files on disk.
@@ -37,6 +40,7 @@ enum Cli {
 fn main() {
     let result = match Cli::parse() {
         Cli::Check => check::run(),
+        Cli::Deps => deps::run(),
         Cli::Fixtures { verify } => {
             assert!(verify, "fixtures currently supports only --verify");
             let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

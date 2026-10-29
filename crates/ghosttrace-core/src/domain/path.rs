@@ -161,9 +161,14 @@ fn decode_percent_bytes(input: &str) -> Option<Vec<u8>> {
             let low = *bytes.get(index + 2)?;
             out.push(hex_value(high)? << 4 | hex_value(low)?);
             index += 3;
-        } else {
+        } else if bytes[index].is_ascii() {
             out.push(bytes[index]);
             index += 1;
+        } else {
+            // The interchange form is ASCII by construction. A non-ASCII
+            // character here is malformed, not a byte to copy: copying its
+            // UTF-8 bytes would invent a path that was never encoded.
+            return None;
         }
     }
     Some(out)
@@ -187,9 +192,14 @@ fn decode_percent_units(input: &str) -> Option<Vec<u16>> {
             }
             out.push(u16::try_from(unit).ok()?);
             index += 6;
-        } else {
+        } else if chars[index].is_ascii_alphanumeric() {
             out.push(chars[index] as u16);
             index += 1;
+        } else {
+            // Only ASCII alphanumerics are emitted literally; anything else
+            // must be a `%uXXXX` escape. Casting an arbitrary char would
+            // truncate it silently.
+            return None;
         }
     }
     Some(out)

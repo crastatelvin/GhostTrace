@@ -1236,12 +1236,46 @@ tasks and the open accessibility/release-target items.
 
 **Consumes:** All trust boundaries. **Produces:** Regression corpus, tested safety/recovery matrix, security check workflow.
 
-- [ ] Add bounded fuzz targets and deterministic regressions for discovered faults; fuzz tooling may use a separately pinned nightly without changing the stable application requirement.
-- [ ] Inject failures at staged write/sync/rename/DB commit/migration/backup/report/worker boundaries and verify honest state on reopen.
-- [ ] Test disk full, lock contention, unsupported schema, corrupted object/index, cancellation, and abandoned staging on every supported OS.
-- [ ] Run current dependency advisory/license checks; remove unnecessary dependencies/features.
-- [ ] Review evidence claims and parser rule mappings with a forensic practitioner if available; document review scope instead of claiming certification.
-- [ ] Commit: `test: harden hostile-input and crash-recovery guarantees`.
+- [x] Add bounded fuzz targets and deterministic regressions for discovered faults; fuzz tooling may use a separately pinned nightly without changing the stable application requirement.
+  `crates/ghosttrace-core/tests/fuzz_targets.rs` uses the pinned `proptest`
+  dependency with a fixed case count on the stable toolchain. Targets: raw
+  time integers/epochs/units, native-path interchange decoding, arbitrary
+  manifest text, CSV/display projection, and worker framing. It found a real
+  fault: the Windows path decoder truncated non-ASCII characters instead of
+  rejecting malformed ASCII interchange text; the decoder is now strict and
+  the case is a named regression. `docs/testing.md` records why a separate
+  nightly/libFuzzer crate is not in the release gate.
+- [x] Inject failures at staged write/sync/rename/DB commit/migration/backup/report/worker boundaries and verify honest state on reopen.
+  `crash_recovery.rs` covers unwritable report/package/backup output (no
+  published directory, staging removed), abandoned report staging cleanup,
+  impossible free-space reserve, truncated database refusal on reopen, and a
+  corrupted stored object failing manifest verification. Capture,
+  migration/backup, writer, worker, and cancellation boundaries already have
+  dedicated tests (`capture_recovery.rs`, `migration_backup.rs`,
+  `writer_concurrency.rs`, `worker_crash.rs`, `worker_protocol.rs`,
+  `desktop_jobs.rs`).
+- [x] Test disk full, lock contention, unsupported schema, corrupted object/index, cancellation, and abandoned staging on every supported OS.
+  Linux x86_64 is the only supported and tested target in this revision;
+  Windows and macOS are build-gated only and are not advertised as supported
+  (see the platform matrix in `docs/testing.md`). Disk full is exercised by the
+  shared reserve check plus unwritable output; lock contention and unsupported
+  schema are covered by `writer_concurrency.rs` and `migrations.rs`; corrupted
+  object/database by `crash_recovery.rs`; cancellation by the job/worker tests;
+  abandoned staging by `crash_recovery.rs` and `backup_restore.rs`.
+- [x] Run current dependency advisory/license checks; remove unnecessary dependencies/features.
+  `cargo run -p xtask -- deps` reads `cargo metadata`, fails on a missing or
+  unreviewed license string, reports duplicate versions, and runs
+  `cargo audit` when installed (otherwise reports `not_installed`). The
+  scheduled `.github/workflows/security.yml` installs `cargo-audit` and runs
+  the same command weekly. Unused `tokio` and `tracing` dependencies were
+  removed; `rusqlite` keeps only the features actually used (`bundled`,
+  `backup`, `hooks`, `limits`).
+- [x] Review evidence claims and parser rule mappings with a forensic practitioner if available; document review scope instead of claiming certification.
+  No external forensic practitioner review is available for this revision.
+  `docs/threat-model.md` states the trust boundaries, the adversarial inputs
+  covered by tests, and the claims that are explicitly not made; this is a
+  documented internal review scope, not a certification.
+- [x] Commit: `test: harden hostile-input and crash-recovery guarantees`.
 
 #### P10.2 — Benchmarks and targeted optimization
 
@@ -1328,13 +1362,27 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P8 | P8.2 | Isolated parser workers | [x] |
 | P9 | P9.1 | Signatures/standard private keys/trust | [x] |
 | P9 | P9.2 | Redacted packages/backup/restore | [x] |
-| P10 | P10.1 | Fuzz/recovery/platform safety | [ ] |
+| P10 | P10.1 | Fuzz/recovery/platform safety | [x] |
 | P10 | P10.2 | Measured benchmark baselines | [ ] |
 | P10 | P10.3 | Complete docs/sample investigations | [ ] |
 | P11 | P11 | Verified release distributions | [ ] |
 | P12 | P12 | Optional read-only local API | [ ] |
 
 For each completed task, append: `Issue: real URL; PR: real URL; commit: actual SHA; verified: command(s), OS, result; reviewer: name; date: actual completion date`. Keep generated benchmark evidence and significant limitation decisions linked from the task. Use GitHub milestones for release gates and labels `area:capture`, `area:ingest`, `area:storage`, `area:gui`, `area:analysis`, `area:integrity`, `area:docs`, `type:bug`, `type:security`, `status:blocked`, `good-first-issue`, and `help-wanted`.
+
+### P10.1 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-29).
+- New tests: 9 (`fuzz_targets.rs`, 256 proptest cases per property) and 7
+  (`crash_recovery.rs`).
+- `cargo run -p xtask -- deps`: 578 packages, no missing or unreviewed
+  licenses, 32 transitive duplicate crate versions reported for review, and
+  `cargo audit` ran with 0 vulnerability records (cargo-audit 0.22.2).
+- Open: Windows/macOS failure injection, NVDA/VoiceOver, and native terminal
+  smoke checks need their own hosts and remain P10/P11 gate items. Advisory
+  scanning needs network and is scheduled rather than blocking every push.
 
 ### P9.2 verification record
 
