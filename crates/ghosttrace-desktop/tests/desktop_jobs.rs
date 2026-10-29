@@ -250,6 +250,7 @@ fn worker_creates_captures_and_imports_a_case() {
                 revision: None,
                 event_limit: 50,
                 report_id: None,
+                redaction: ghosttrace_core::reports::redact::RedactionPolicy::default(),
             });
             let (_, event) = wait_for(&bus, |event| {
                 matches!(event, CommandEvent::Finished { id: 8, .. })
@@ -377,6 +378,7 @@ fn worker_creates_captures_and_imports_a_case() {
                 revision: None,
                 event_limit: 50,
                 report_id: Some(report_id),
+                redaction: ghosttrace_core::reports::redact::RedactionPolicy::default(),
             });
             let (_, event) = wait_for(&bus, |event| {
                 matches!(event, CommandEvent::Failed { id: 10, .. })

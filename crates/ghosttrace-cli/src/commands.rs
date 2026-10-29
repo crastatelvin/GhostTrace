@@ -31,9 +31,13 @@ use ghosttrace_core::integrity::signature::{
     KeyTrust, ManifestStatus, SignatureEnvelope, SignatureStatus, TrustedKeys, sidecar_path,
     verify_manifest,
 };
+use ghosttrace_core::reports::csv;
+use ghosttrace_core::reports::package::{PackageRequest, publish_package, verify_package};
+use ghosttrace_core::reports::redact::{RedactionPolicy, redact_report};
 use ghosttrace_core::reports::{self, ReportContext, ReportSelection};
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
 use ghosttrace_core::storage::CASE_DIR_SUFFIX;
+use ghosttrace_core::storage::backup::{backup_case, restore_case};
 
 use crate::output;
 
@@ -115,6 +119,17 @@ pub enum Cli {
  links, and no remote resources. Publication is atomic and never overwrites an\
  existing report directory.")]
     Report(ReportArgs),
+    /// Build a portable evidence package a second person can verify offline.
+    #[command(
+        long_about = "Build a portable evidence package a second person can verify offline.\n\nThe package contains the acquisition manifest, the stored objects the report cites, the\nreport (JSON, HTML, and spreadsheet-safe CSV), a verifier README, and a SHA-256 inventory\nover every file. --redact applies the same projection as `report`. --key signs the\ninventory with an encrypted Ed25519 key; without it the package is honestly unsigned.\nPublication is atomic and never overwrites an existing package."
+    )]
+    Package(PackageArgs),
+    /// Verify a portable evidence package's inventory and optional signature.
+    VerifyPackage(VerifyPackageArgs),
+    /// Take a consistent portable backup (SQLite snapshot + referenced objects).
+    Backup(BackupArgs),
+    /// Restore a verified backup into a new case directory.
+    Restore(RestoreArgs),
     /// Import a captured log object through a bounded, versioned adapter.
     #[command(
         long_about = "Import a captured log object through a bounded, versioned adapter.\
@@ -417,6 +432,98 @@ pub struct ReportArgs {
     /// Fixed report identity; defaults to `report-<acquisition>-<unix seconds>`.
     #[arg(long)]
     pub report_id: Option<String>,
+    /// Also write `report.csv`, a spreadsheet-safe projection.
+    #[arg(long)]
+    pub csv: bool,
+    /// Replace selected values with `[redacted]` in the exported copy.
+    #[arg(long = "redact", value_enum, action = clap::ArgAction::Append)]
+    pub redact: Vec<RedactCategory>,
+}
+
+/// The redaction categories. Each is a projection over the export, never a
+/// change to the case or the stored evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum RedactCategory {
+    CaseLabel,
+    SourcePaths,
+    ObjectPaths,
+    TimelineSummaries,
+    TimelineHosts,
+}
+
+fn redaction_policy(categories: &[RedactCategory]) -> RedactionPolicy {
+    let mut policy = RedactionPolicy::default();
+    for category in categories {
+        match category {
+            RedactCategory::CaseLabel => policy.case_label = true,
+            RedactCategory::SourcePaths => policy.source_paths = true,
+            RedactCategory::ObjectPaths => policy.object_paths = true,
+            RedactCategory::TimelineSummaries => policy.timeline_summaries = true,
+            RedactCategory::TimelineHosts => policy.timeline_hosts = true,
+        }
+    }
+    policy
+}
+
+#[derive(Args)]
+pub struct PackageArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Directory that will receive the package directory.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Acquisition to package (default: the latest).
+    #[arg(long)]
+    pub acquisition: Option<String>,
+    /// Parse run (revision) whose events the report shows.
+    #[arg(long)]
+    pub revision: Option<String>,
+    /// Maximum timeline events included in the report.
+    #[arg(long, default_value_t = 500)]
+    pub limit: u32,
+    /// Manifest to include (default: the acquisition's manifest).
+    #[arg(long)]
+    pub manifest: Option<PathBuf>,
+    /// Existing manifest signature to include (default: <manifest>.sig.json).
+    #[arg(long)]
+    pub signature: Option<PathBuf>,
+    /// Replace selected values with `[redacted]` in the packaged report.
+    #[arg(long = "redact", value_enum, action = clap::ArgAction::Append)]
+    pub redact: Vec<RedactCategory>,
+    /// Encrypted key that signs the package inventory (prompts for a passphrase).
+    #[arg(long)]
+    pub key: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct VerifyPackageArgs {
+    /// Package directory to verify.
+    #[arg(long)]
+    pub package: PathBuf,
+    /// Trusted-key fingerprint list (one 64-character fingerprint per line).
+    #[arg(long)]
+    pub trust: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct BackupArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// Directory that will receive the backup directory.
+    #[arg(long)]
+    pub output: PathBuf,
+}
+
+#[derive(Args)]
+pub struct RestoreArgs {
+    /// Verified backup directory.
+    #[arg(long)]
+    pub backup: PathBuf,
+    /// New case directory; must not exist.
+    #[arg(long)]
+    pub destination: PathBuf,
 }
 
 #[derive(Args)]
@@ -662,6 +769,62 @@ struct ReportOutput {
     objects: usize,
     events: usize,
     gaps: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    csv: Option<String>,
+    redacted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redaction: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PackageOutput {
+    package_id: String,
+    directory: String,
+    inventory: String,
+    files: usize,
+    total_bytes: u64,
+    signed: bool,
+    public_key: Option<String>,
+    key_fingerprint: Option<String>,
+    redacted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redaction: Option<String>,
+}
+
+#[derive(Serialize)]
+struct VerifyPackageOutput {
+    verified: bool,
+    files_verified: usize,
+    total_bytes: u64,
+    signature: String,
+    signature_detail: Option<String>,
+    key_trust: String,
+    key_fingerprint: Option<String>,
+    case_id: String,
+    acquisition_id: String,
+    revision: String,
+    redacted: bool,
+    explanation: String,
+}
+
+#[derive(Serialize)]
+struct BackupOutput {
+    backup_id: String,
+    directory: String,
+    inventory: String,
+    case_id: String,
+    schema_version: u32,
+    files: usize,
+    total_bytes: u64,
+}
+
+#[derive(Serialize)]
+struct RestoreOutput {
+    case_id: String,
+    directory: String,
+    schema_version: u32,
+    objects: usize,
+    manifests: usize,
 }
 
 #[derive(Serialize)]
@@ -693,6 +856,10 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Sign(args) => sign(args),
         Cli::Verify(args) => verify(args),
         Cli::Report(args) => report(args),
+        Cli::Package(args) => package(args),
+        Cli::VerifyPackage(args) => verify_package_command(args),
+        Cli::Backup(args) => backup(args),
+        Cli::Restore(args) => restore(args),
         Cli::Import(args) => import(args),
         Cli::Analyze(args) => analyze(args),
         Cli::Worker(args) => worker(args),
@@ -1166,31 +1333,64 @@ fn prompt_new_passphrase() -> Result<zeroize::Zeroizing<String>, u8> {
     Ok(first)
 }
 
-fn report(args: ReportArgs) -> u8 {
-    let (session, _open) = match CaseSession::open(&args.case) {
-        Ok(open) => open,
-        Err(error) => return fail(&error),
-    };
-    let reader = match session.reader() {
-        Ok(reader) => reader,
-        Err(error) => return fail(&error),
-    };
+/// Build one report from recorded rows. The session is returned because the
+/// package flow needs the case root and manifests root.
+fn build_case_report(
+    case: &Path,
+    acquisition: Option<String>,
+    revision: Option<String>,
+    limit: u32,
+    generated_by: &str,
+) -> Result<(CaseSession, ghosttrace_core::reports::ReportV1), CoreError> {
+    let (session, _open) = CaseSession::open(case)?;
+    let reader = session.reader()?;
     let context = ReportContext {
         case_id: session.case_id().to_string(),
         label: session.config().label.clone(),
         display_timezone: session.config().display_timezone.clone(),
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
-        generated_by: "ghosttrace-cli".to_string(),
+        generated_by: generated_by.to_string(),
     };
     let selection = ReportSelection {
-        acquisition_id: args.acquisition,
-        revision: args.revision,
-        event_limit: args.limit,
+        acquisition_id: acquisition,
+        revision,
+        event_limit: limit,
     };
-    let mut report = match reports::build_report(&reader, &context, &selection) {
-        Ok(report) => report,
+    let report = reports::build_report(&reader, &context, &selection)?;
+    Ok((session, report))
+}
+
+fn redact_if_requested(
+    report: ghosttrace_core::reports::ReportV1,
+    categories: &[RedactCategory],
+) -> Result<
+    (
+        ghosttrace_core::reports::ReportV1,
+        Option<ghosttrace_core::reports::redact::RedactionLedger>,
+    ),
+    CoreError,
+> {
+    let policy = redaction_policy(categories);
+    if !policy.any() {
+        return Ok((report, None));
+    }
+    let (redacted, ledger) = redact_report(&report, &policy);
+    Ok((redacted, Some(ledger)))
+}
+
+fn report(args: ReportArgs) -> u8 {
+    let (session, report) = match build_case_report(
+        &args.case,
+        args.acquisition,
+        args.revision,
+        args.limit,
+        "ghosttrace-cli",
+    ) {
+        Ok(built) => built,
         Err(error) => return fail(&error),
     };
+    let _ = session;
+    let mut report = report;
     if let Some(report_id) = args.report_id {
         if !report_id
             .chars()
@@ -1205,7 +1405,25 @@ fn report(args: ReportArgs) -> u8 {
         }
         report.report_id = report_id;
     }
-    match reports::publish(&report, &args.output) {
+    let (report, ledger) = match redact_if_requested(report, &args.redact) {
+        Ok(redacted) => redacted,
+        Err(error) => return fail(&error),
+    };
+    let mut extras: Vec<(String, String)> = Vec::new();
+    if args.csv {
+        extras.push(("report.csv".into(), csv::timeline_csv(&report)));
+    }
+    if let Some(ledger) = &ledger {
+        match ledger.to_json() {
+            Ok(text) => extras.push(("redaction.json".into(), text)),
+            Err(error) => return fail(&error),
+        }
+    }
+    let extras_ref: Vec<(&str, &str)> = extras
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    match reports::publish_with(&report, &args.output, &extras_ref) {
         Ok(published) => {
             output::emit_json(&ReportOutput {
                 report_id: report.report_id.clone(),
@@ -1216,6 +1434,197 @@ fn report(args: ReportArgs) -> u8 {
                 objects: report.objects.len(),
                 events: report.timeline.len(),
                 gaps: report.coverage.total_gaps(),
+                csv: args
+                    .csv
+                    .then(|| native_path(&published.directory.join("report.csv")).encoded()),
+                redacted: ledger.is_some(),
+                redaction: ledger.as_ref().map(|ledger| ledger.summary()),
+            });
+            EXIT_OK
+        }
+        Err(error) => fail(&error),
+    }
+}
+
+fn package(args: PackageArgs) -> u8 {
+    let (session, report) = match build_case_report(
+        &args.case,
+        args.acquisition,
+        args.revision,
+        args.limit,
+        "ghosttrace-cli",
+    ) {
+        Ok(built) => built,
+        Err(error) => return fail(&error),
+    };
+    let (report, ledger) = match redact_if_requested(report, &args.redact) {
+        Ok(redacted) => redacted,
+        Err(error) => return fail(&error),
+    };
+    let manifest_path = match args.manifest {
+        Some(path) => path,
+        None => session
+            .layout()
+            .manifests_root()
+            .join(format!("manifest-{}.json", report.acquisition.id)),
+    };
+    let manifest_signature = match args.signature {
+        Some(path) => Some(path),
+        None => {
+            let candidate = sidecar_path(&manifest_path);
+            candidate.exists().then_some(candidate)
+        }
+    };
+    let key = match args.key {
+        Some(path) => {
+            let passphrase = match prompt_secret("Key passphrase: ") {
+                Ok(passphrase) => passphrase,
+                Err(code) => return code,
+            };
+            match load_key_file(&path, passphrase.as_bytes()) {
+                Ok(key) => Some(key),
+                Err(error) => return fail(&error),
+            }
+        }
+        None => None,
+    };
+    let request = PackageRequest {
+        case_root: session.layout().root(),
+        output: &args.output,
+        report: &report,
+        redaction: ledger.as_ref(),
+        manifest_path: &manifest_path,
+        manifest_signature: manifest_signature.as_deref(),
+        key: key.as_ref(),
+        tool_version: env!("CARGO_PKG_VERSION"),
+    };
+    match publish_package(request) {
+        Ok(published) => {
+            output::emit_json(&PackageOutput {
+                package_id: published.package_id,
+                directory: native_path(&published.directory).encoded(),
+                inventory: native_path(&published.inventory_path).encoded(),
+                files: published.files.len(),
+                total_bytes: published.total_bytes,
+                signed: published.signed,
+                public_key: published.public_key,
+                key_fingerprint: published.key_fingerprint,
+                redacted: ledger.is_some(),
+                redaction: ledger.as_ref().map(|ledger| ledger.summary()),
+            });
+            EXIT_OK
+        }
+        Err(error) => fail(&error),
+    }
+}
+
+fn verify_package_command(args: VerifyPackageArgs) -> u8 {
+    let trust = match args.trust {
+        Some(path) => match TrustedKeys::load(&path) {
+            Ok(trust) => Some(trust),
+            Err(error) => return fail(&error),
+        },
+        None => None,
+    };
+    let verification = match verify_package(&args.package, trust.as_ref()) {
+        Ok(verification) => verification,
+        Err(error) => {
+            return match error {
+                CoreError::CorruptEvidence
+                | CoreError::IntegrityMismatch
+                | CoreError::Unsupported(_) => {
+                    output::emit_error(error.code(), &error.to_string());
+                    EXIT_VERIFY
+                }
+                other => fail(&other),
+            };
+        }
+    };
+    let (signature, signature_detail) = match &verification.signature {
+        SignatureStatus::Absent => ("absent", None),
+        SignatureStatus::Valid => ("valid", None),
+        SignatureStatus::Invalid(reason) => ("invalid", Some(reason.clone())),
+    };
+    let key_trust = match verification.key_trust {
+        KeyTrust::NotApplicable => "not_applicable",
+        KeyTrust::Untrusted => "untrusted",
+        KeyTrust::Trusted => "trusted",
+    };
+    let explanation: &str = match (&verification.signature, verification.key_trust) {
+        (SignatureStatus::Absent, _) => {
+            "The inventory and every listed file match their digests. The package is unsigned: \
+             this proves the files match the inventory, not who produced them."
+        }
+        (SignatureStatus::Valid, KeyTrust::Trusted) => {
+            "Every listed file matches its digest and the inventory signature is valid with a \
+             trusted key."
+        }
+        (SignatureStatus::Valid, _) => {
+            "Every listed file matches its digest and the signature is mathematically valid, but \
+             the key is not in your trusted-key list."
+        }
+        (SignatureStatus::Invalid(_), _) => {
+            "The inventory signature does not cover these exact bytes; treat the package as \
+             changed."
+        }
+    };
+    output::emit_json(&VerifyPackageOutput {
+        verified: verification.is_accepted(),
+        files_verified: verification.files_verified,
+        total_bytes: verification.total_bytes,
+        signature: signature.into(),
+        signature_detail,
+        key_trust: key_trust.into(),
+        key_fingerprint: verification.key_fingerprint.clone(),
+        case_id: verification.inventory.case_id.clone(),
+        acquisition_id: verification.inventory.acquisition_id.clone(),
+        revision: verification.inventory.revision.clone(),
+        redacted: verification.inventory.redacted,
+        explanation: explanation.to_string(),
+    });
+    if verification.is_accepted() {
+        return EXIT_OK;
+    }
+    let detail = match &verification.signature {
+        SignatureStatus::Invalid(reason) => reason.clone(),
+        _ => "the package did not verify".to_string(),
+    };
+    output::emit_error("integrity_mismatch", &detail);
+    EXIT_VERIFY
+}
+
+fn backup(args: BackupArgs) -> u8 {
+    match backup_case(&args.case, &args.output, env!("CARGO_PKG_VERSION")) {
+        Ok(published) => {
+            let backup_id = published
+                .directory
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            output::emit_json(&BackupOutput {
+                backup_id,
+                directory: native_path(&published.directory).encoded(),
+                inventory: native_path(&published.inventory_path).encoded(),
+                case_id: published.case_id,
+                schema_version: published.schema_version,
+                files: published.files.len(),
+                total_bytes: published.total_bytes,
+            });
+            EXIT_OK
+        }
+        Err(error) => fail(&error),
+    }
+}
+
+fn restore(args: RestoreArgs) -> u8 {
+    match restore_case(&args.backup, &args.destination) {
+        Ok(restored) => {
+            output::emit_json(&RestoreOutput {
+                case_id: restored.case_id,
+                directory: native_path(&restored.directory).encoded(),
+                schema_version: restored.schema_version,
+                objects: restored.objects,
+                manifests: restored.manifests,
             });
             EXIT_OK
         }

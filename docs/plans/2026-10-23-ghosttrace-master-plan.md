@@ -1178,13 +1178,55 @@ the open accessibility/release-target items recorded in `docs/releases.md`.
 
 **Consumes:** Stable case/revision manifests and signatures. **Produces:** Safe projections, signed portable packages, consistent verified case backup/restore.
 
-- [ ] Test redacted output removes selected values without altering raw evidence, and ledger itself does not leak removed text. Add GUI redaction selection/preview/summary tests using the same projection contract.
-- [ ] Test formula prefixes/control whitespace in CSV and JSON fidelity; describe any projection transformation.
-- [ ] Test backup under active WAL writer, crash during backup, missing object, corrupt inventory, path traversal/collision, insufficient space, and restore to existing destination rejection.
-- [ ] Implement SQLite consistent backup plus immutable referenced objects; restore verifies into a new private path with relative references.
-- [ ] Commit: `feat: export redacted packages and restore verified portable cases`.
+- [x] Test redacted output removes selected values without altering raw evidence, and ledger itself does not leak removed text. Add GUI redaction selection/preview/summary tests using the same projection contract.
+  `redacted_exports.rs` builds a real report, redacts all five categories, and
+  asserts every selected value is `[redacted]` while the input report, the case
+  rows, and the stored object bytes are unchanged. The ledger JSON is asserted
+  not to contain the case label, either timeline summary, the source file name,
+  or the stored object path; `preview_counts` is asserted equal to the applied
+  ledger actions. `desktop_redaction.rs` drives the selection through
+  `AppState`, asserts the `Command::Report` carries exactly the selected
+  policy, checks the pre-button "Selection: …" text, and asserts the published
+  summary names the ledger without values.
+- [x] Test formula prefixes/control whitespace in CSV and JSON fidelity; describe any projection transformation.
+  `csv_safety.rs` covers `=`, `+`, `-`, `@`, leading spaces before a formula,
+  tab/CR/LF/bell controls, RFC 4180 quoting, one row per event, and object rows.
+  The same hostile summary is asserted byte-exact in `report.json`, and the CSV
+  transformation is documented in `docs/reports.md` and `docs/cli.md`.
+- [x] Test backup under active WAL writer, crash during backup, missing object, corrupt inventory, path traversal/collision, insufficient space, and restore to existing destination rejection.
+  `backup_restore.rs` takes the backup while the `CaseSession` (WAL writer)
+  is alive and asserts the snapshot contains the committed event rows; a
+  missing object aborts the backup with `corrupt_evidence` and no published
+  directory; a corrupt, escaped, or duplicated inventory is rejected; an
+  interrupted `.part` directory is never trusted; `ensure_reserve` rejects an
+  impossible size with `ResourceLimit` before any copy; and restore refuses an
+  existing destination and a backup with a missing object without creating the
+  destination. A crash is modeled as the staging directory that a crash would
+  leave: it has no valid inventory and is never accepted.
+- [x] Implement SQLite consistent backup plus immutable referenced objects; restore verifies into a new private path with relative references.
+  `storage::backup::backup_case` uses the online backup API, checkpoints the
+  snapshot to a single `case.sqlite` (no `-wal`/`-shm` side files), copies every
+  referenced object at its relative `objects/sha256/<bucket>/<hex>` location,
+  the config, and the manifests, and publishes a `backup.json` inventory
+  atomically. `restore_case` verifies the inventory, copies into a private
+  `0700` sibling staging directory, re-verifies every digest, runs
+  `PRAGMA integrity_check`, checks the schema version and case id, and verifies
+  every `object_location` (path, length, digest) before renaming. The restored
+  case is reopened through `CaseReader` and `CaseSession::open`; the CLI test
+  then runs `verify` and `timeline` against it. `package_paths.rs` and
+  `cli_package.rs` prove the independent verifier accepts an untampered package,
+  rejects a modified byte, and that `report --redact`/`package`/`verify-package`
+  and `backup`/`restore` work end to end.
+- [x] Commit: `feat: export redacted packages and restore verified portable cases`.
 
 **P9 gate:** Independent verifier accepts an untampered package and rejects modified bytes; a relocated case reopens with native paths/provenance intact. Promote `0.4.0-beta.1` after P8–P9 gates and signing interoperability checks.
+
+Gate evidence: the package verifier accepts an untampered package and rejects a
+modified byte (`package_paths.rs`, `cli_package.rs`); a restored case reopens
+through the normal read path with its relative object references and verifies
+(`backup_restore.rs`); the P9.1 known-answer signature was produced
+independently by OpenSSL. Promotion to `0.4.0-beta.1` stays with the release
+tasks and the open accessibility/release-target items.
 
 ### P10 — Adversarial validation, scale, recovery, and documentation
 
@@ -1285,7 +1327,7 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P8 | P8.1 | EVTX adapters | [x] |
 | P8 | P8.2 | Isolated parser workers | [x] |
 | P9 | P9.1 | Signatures/standard private keys/trust | [x] |
-| P9 | P9.2 | Redacted packages/backup/restore | [ ] |
+| P9 | P9.2 | Redacted packages/backup/restore | [x] |
 | P10 | P10.1 | Fuzz/recovery/platform safety | [ ] |
 | P10 | P10.2 | Measured benchmark baselines | [ ] |
 | P10 | P10.3 | Complete docs/sample investigations | [ ] |
@@ -1293,6 +1335,25 @@ Use this table as a GitHub milestone map. Add a real issue/PR URL and commit SHA
 | P12 | P12 | Optional read-only local API | [ ] |
 
 For each completed task, append: `Issue: real URL; PR: real URL; commit: actual SHA; verified: command(s), OS, result; reviewer: name; date: actual completion date`. Keep generated benchmark evidence and significant limitation decisions linked from the task. Use GitHub milestones for release gates and labels `area:capture`, `area:ingest`, `area:storage`, `area:gui`, `area:analysis`, `area:integrity`, `area:docs`, `type:bug`, `type:security`, `status:blocked`, `good-first-issue`, and `help-wanted`.
+
+### P9.2 verification record
+
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
+  `cargo test --workspace --locked`, `cargo run -p xtask -- check` — pass on
+  Linux x86_64 (2026-10-29).
+- Tests: 5 (`redacted_exports.rs`), 4 (`csv_safety.rs`), 6 (`backup_restore.rs`),
+  7 (`package_paths.rs`), 4 (`desktop_redaction.rs`), 3 (`cli_package.rs`).
+- Gate evidence: `package_paths.rs` verifies an untampered package and rejects
+  a flipped byte, an unlisted file, an escaping path, and a duplicate path;
+  `backup_restore.rs` restores a backup and reopens the relocated case through
+  `CaseSession`, re-verifies its manifest, and `cli_package.rs` runs `status`,
+  `verify`, and `timeline` against the restored case.
+- Open: the free-space check is a preflight estimate; a filesystem that fills
+  during the copy still fails safely (staging removed) but the error is a
+  storage error, not `ResourceLimit`. Backup inventories are unsigned in this
+  release; signing a backup would reuse the P9.1 envelope if a later gate needs
+  it. Redaction is field-granular, not free-text scrubbing: a value that
+  contains a secret inside an unselected field is not removed.
 
 ### P9.1 verification record
 

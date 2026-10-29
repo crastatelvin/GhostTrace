@@ -124,6 +124,9 @@ fn a_published_report_and_a_verification_result_are_shown() {
             objects: 3,
             events: 12,
             gaps: 1,
+            csv: "/tmp/opencode/reports/report-acq-1-1/report.csv".into(),
+            redacted: false,
+            redaction: None,
         },
     });
     let published = state.report.last.clone().expect("published summary");
@@ -137,6 +140,8 @@ fn a_published_report_and_a_verification_result_are_shown() {
             objects: 3,
             events: 12,
             gaps: 1,
+            csv: Some("/tmp/opencode/reports/report-acq-1-1/report.csv".into()),
+            redacted: false,
         }
     );
 
@@ -243,6 +248,7 @@ fn a_cancelled_report_publishes_nothing() {
         revision: None,
         event_limit: 10,
         report_id: None,
+        redaction: ghosttrace_core::reports::redact::RedactionPolicy::default(),
     });
 
     let started = Instant::now();

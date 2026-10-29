@@ -4,8 +4,11 @@
 //! and published atomically: a failure leaves no directory that looks like a
 //! completed export, and an existing report is never overwritten.
 
+pub mod csv;
 pub mod html;
 pub mod json;
+pub mod package;
+pub mod redact;
 
 use std::path::{Path, PathBuf};
 
@@ -422,6 +425,17 @@ pub fn build_report(
 
 /// Publish `report.json` and `report.html` atomically.
 pub fn publish(report: &ReportV1, output_dir: &Path) -> CoreResult<PublishedReport> {
+    publish_with(report, output_dir, &[])
+}
+
+/// Publish a report plus named extra files (`report.csv`, `redaction.json`).
+/// Extras are part of the same atomic publication, so a failure never leaves a
+/// half-written redacted export.
+pub fn publish_with(
+    report: &ReportV1,
+    output_dir: &Path,
+    extras: &[(&str, &str)],
+) -> CoreResult<PublishedReport> {
     std::fs::create_dir_all(output_dir)
         .map_err(|error| CoreError::Storage(format!("report output dir: {error}")))?;
     let target = output_dir.join(&report.report_id);
@@ -443,6 +457,14 @@ pub fn publish(report: &ReportV1, output_dir: &Path) -> CoreResult<PublishedRepo
         create_private_dir(&staging)?;
         write_synced(&staging.join("report.json"), json_text.as_bytes())?;
         write_synced(&staging.join("report.html"), html_text.as_bytes())?;
+        for (name, text) in extras {
+            if *name == "report.json" || *name == "report.html" || name.contains('/') {
+                return Err(CoreError::InvalidInput(format!(
+                    "report extra {name:?} is not an allowed flat file name"
+                )));
+            }
+            write_synced(&staging.join(name), text.as_bytes())?;
+        }
         sync_directory(&staging)?;
         std::fs::rename(&staging, &target)
             .map_err(|error| CoreError::Storage(format!("report publish: {error}")))?;
@@ -460,7 +482,7 @@ pub fn publish(report: &ReportV1, output_dir: &Path) -> CoreResult<PublishedRepo
     })
 }
 
-fn create_private_dir(path: &Path) -> CoreResult<()> {
+pub(crate) fn create_private_dir(path: &Path) -> CoreResult<()> {
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
@@ -472,7 +494,22 @@ fn create_private_dir(path: &Path) -> CoreResult<()> {
         .map_err(|error| CoreError::Storage(format!("report staging: {error}")))
 }
 
-fn write_synced(path: &Path, bytes: &[u8]) -> CoreResult<()> {
+/// Create a private directory tree (parents included) with mode `0700` on
+/// Unix. Used for nested content-addressed object paths.
+pub(crate) fn create_private_dir_all(path: &Path) -> CoreResult<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(path)
+        .map_err(|error| CoreError::Storage(format!("directory tree: {error}")))
+}
+
+pub(crate) fn write_synced(path: &Path, bytes: &[u8]) -> CoreResult<()> {
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -484,7 +521,7 @@ fn write_synced(path: &Path, bytes: &[u8]) -> CoreResult<()> {
         .map_err(|error| CoreError::Storage(format!("report file: {error}")))
 }
 
-fn sync_directory(path: &Path) -> CoreResult<()> {
+pub(crate) fn sync_directory(path: &Path) -> CoreResult<()> {
     #[cfg(unix)]
     {
         std::fs::File::open(path)

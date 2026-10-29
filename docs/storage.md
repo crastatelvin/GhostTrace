@@ -186,3 +186,23 @@ journal mode (WAL), `synchronous`, and page size — recorded, never assumed.
   `saved_views`. `mapped_fields_json` keeps adapter interpretation next to, not
   inside, the recorded raw fields; `NULL` means "mapped nothing", never
   "mapped and empty".
+
+## Portable backup and restore (P9.2)
+
+`ghosttrace backup` writes a new directory containing a consistent SQLite
+snapshot (`case.sqlite`), `case.toml`, the manifests, every referenced immutable
+object at its relative `objects/sha256/<bucket>/<hex>` location, a verifier
+`README.txt`, and `backup.json` with the byte length and SHA-256 of every file.
+The snapshot is taken with SQLite's online backup API, so committed WAL data is
+included, and is checkpointed to one file so the backup has no `-wal`/`-shm`
+side files. Publication is atomic: a failure removes the staging directory and
+leaves no backup that looks complete.
+
+`ghosttrace restore` refuses an existing destination, requires free space, and
+materializes the case in a private `0700` sibling staging directory. It verifies
+every inventory digest, `PRAGMA integrity_check`, the schema version, the case
+id, and every `object_location` reference (path, length, digest) before
+renaming. Object locations are relative, so the restored case does not depend on
+where the original lived; it reopens through the normal `CaseSession` path.
+Signing keys and trusted-key lists are excluded on purpose: they are user
+secrets outside the case.

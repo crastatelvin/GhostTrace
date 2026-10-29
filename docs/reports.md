@@ -14,6 +14,22 @@ Two commands close the loop on a captured case:
 Nothing in either command reads the evidence source again, uploads anything, or
 resolves a URL.
 
+## Redaction and CSV (P9.2)
+
+`ghosttrace report --redact <category>...` publishes a **projection** of the
+report: selected values are replaced with `[redacted]` in the exported copy and
+a `redaction.json` ledger records field names and counts only. The case rows,
+the stored objects, and the original report selection are unchanged. Categories:
+`case-label`, `source-paths` (claimed source, roots, coverage-gap paths),
+`object-paths`, `timeline-summaries`, `timeline-hosts`.
+
+`--csv` writes `report.csv` (and a package always carries `report.csv` and
+`objects.csv`). CSV is a spreadsheet-safe projection, not a fidelity claim:
+CR/LF/TAB and other control characters become visible `\u{...}` escapes, a cell
+whose first non-space character is `=`, `+`, `-`, or `@` gets a leading
+apostrophe, and cells with separators or quotes are RFC 4180 quoted. The JSON
+report keeps every value exactly.
+
 ## `ghosttrace verify`
 
 ```bash

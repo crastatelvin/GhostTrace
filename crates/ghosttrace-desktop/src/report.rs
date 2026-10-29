@@ -2,9 +2,9 @@
 //!
 //! Both actions are writes that publish files, so they run on the single job
 //! worker and report through job outcomes. The screen states the scope before
-//! the button: P6.4 exports an **unredacted** report; the redaction workflow
-//! arrives with P9.2. Verification re-hashes stored objects and never touches
-//! source evidence.
+//! the button: P9.2 adds an explicit redaction selection whose projection is
+//! applied to the exported copy only. Verification re-hashes stored objects
+//! and never touches source evidence.
 
 use eframe::egui;
 use ghosttrace_core::text::escape_for_display;
@@ -15,8 +15,9 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     ui.heading("Report and verification");
     ui.label(
         "The report describes the recorded case only: coverage, stored objects, provenance, \
-         and a bounded timeline. This phase exports an unredacted report — recorded values are \
-         included as stored. Redaction arrives with P9.2.",
+         and a bounded timeline. Without redaction the export is unredacted and contains \
+         recorded values as stored. Redaction replaces selected values with [redacted] in the \
+         published copy; the case itself is never changed.",
     );
 
     let Some(open) = state.open.clone() else {
@@ -56,6 +57,39 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     );
     labeled_text(ui, "Destination directory", &mut state.report.destination);
     labeled_text(ui, "Report id (optional)", &mut state.report.report_id);
+
+    ui.separator();
+    ui.heading("Redaction (applies to the export)");
+    ui.label(
+        "Each selected category is replaced with [redacted]. The published ledger lists field \
+         names and counts only, never the removed text. A report is always exported with a \
+         spreadsheet-safe report.csv.",
+    );
+    ui.checkbox(&mut state.report.redact_case_label, "Case label");
+    ui.checkbox(
+        &mut state.report.redact_source_paths,
+        "Source paths (claimed source, roots, coverage gaps)",
+    );
+    ui.checkbox(
+        &mut state.report.redact_object_paths,
+        "Stored object paths (digests and lengths stay)",
+    );
+    ui.checkbox(
+        &mut state.report.redact_timeline_summaries,
+        "Timeline summaries",
+    );
+    ui.checkbox(
+        &mut state.report.redact_timeline_hosts,
+        "Timeline host claims",
+    );
+    ui.label(format!(
+        "Selection: {}",
+        if state.report.redaction().any() {
+            state.report.redaction().selected().join(", ")
+        } else {
+            "none (unredacted export)".to_string()
+        }
+    ));
     if ui.button("Export report").clicked() {
         state.export_report();
     }
@@ -73,6 +107,12 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
             ("HTML", &report.html),
         ] {
             ui.label(format!("{label}: {}", escape_for_display(path, 1_024).0));
+        }
+        if let Some(csv) = &report.csv {
+            ui.label(format!("CSV: {}", escape_for_display(csv, 1_024).0));
+        }
+        if report.redacted {
+            ui.label("This export is redacted; see redaction.json in the report directory.");
         }
     }
 
@@ -182,6 +222,49 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
             ui.spinner();
         }
         ui.label(&state.report.sign_status);
+    });
+
+    ui.separator();
+    ui.heading("Portable backup and restore");
+    ui.label(
+        "A backup is a consistent SQLite snapshot plus every referenced immutable object, the \
+         config, and the manifests, with a SHA-256 inventory over all of it. Signing keys and \
+         trusted-key lists are excluded on purpose. Restore verifies every digest, the database \
+         integrity, the schema version, and every object reference before publishing a new case \
+         directory; the destination must not exist.",
+    );
+    labeled_text(
+        ui,
+        "Backup destination directory",
+        &mut state.report.backup_output,
+    );
+    if ui.button("Back up this case").clicked() {
+        state.backup_case();
+    }
+    ui.horizontal(|ui| {
+        if state.report.backing_up {
+            ui.spinner();
+        }
+        ui.label(&state.report.backup_status);
+    });
+    labeled_text(
+        ui,
+        "Backup directory to restore",
+        &mut state.report.restore_backup,
+    );
+    labeled_text(
+        ui,
+        "Restore destination (must not exist)",
+        &mut state.report.restore_destination,
+    );
+    if ui.button("Restore backup").clicked() {
+        state.restore_case();
+    }
+    ui.horizontal(|ui| {
+        if state.report.restoring {
+            ui.spinner();
+        }
+        ui.label(&state.report.restore_status);
     });
 }
 

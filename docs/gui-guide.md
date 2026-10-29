@@ -265,3 +265,15 @@ silently.
   (mode `0600`, never overwritten). The passphrase is a password field, is moved
   into the job, and is cleared immediately; it is never stored in the case or a
   report. An existing sidecar is never replaced.
+
+**Redaction, packages, and backup/restore (P9.2)**
+
+- The "Report and verify" screen has an explicit redaction selection (case
+  label, source paths, object paths, timeline summaries, timeline hosts). The
+  selection is stated before the button and applied only to the published copy;
+  a `redaction.json` ledger lists fields and counts, never removed text. Every
+  desktop export also writes `report.csv`.
+- The same screen can back up the open case and restore a backup into a new
+  directory. Restore verifies the inventory, database integrity, schema
+  version, and every object reference before publishing, then opens the
+  restored case.

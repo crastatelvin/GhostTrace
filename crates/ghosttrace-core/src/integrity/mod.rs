@@ -6,6 +6,7 @@
 //! read can never be mistaken for a verified full-content hash.
 
 pub mod hash;
+pub mod inventory;
 pub mod keys;
 pub mod manifest;
 pub mod signature;

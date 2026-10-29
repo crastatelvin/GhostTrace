@@ -15,6 +15,7 @@ use ghosttrace_core::domain::detail::{EventDetail, Histogram};
 use ghosttrace_core::domain::finding::{Disposition, Finding};
 use ghosttrace_core::domain::query::{EventPage, EventQuery, EventRow, TimeCursor};
 use ghosttrace_core::ingest::LogFormat;
+use ghosttrace_core::reports::redact::RedactionPolicy;
 
 use crate::commands::{Command, CommandEvent, JobId, JobPhase, Outcome};
 use crate::query::{QueryRequest, QueryResult, QueryTarget};
@@ -1285,6 +1286,8 @@ pub struct ReportSummary {
     pub objects: usize,
     pub events: usize,
     pub gaps: u64,
+    pub csv: Option<String>,
+    pub redacted: bool,
 }
 
 /// One manifest verification result.
@@ -1331,6 +1334,22 @@ pub struct ReportState {
     pub sign_passphrase: String,
     pub sign_status: String,
     pub signing: bool,
+    /// Redaction selection for the next export. The projection never touches
+    /// the case; it only shapes the published copy.
+    pub redact_case_label: bool,
+    pub redact_source_paths: bool,
+    pub redact_object_paths: bool,
+    pub redact_timeline_summaries: bool,
+    pub redact_timeline_hosts: bool,
+    /// Directory that receives a portable backup.
+    pub backup_output: String,
+    pub backup_status: String,
+    pub backing_up: bool,
+    /// Backup directory and destination for a restore.
+    pub restore_backup: String,
+    pub restore_destination: String,
+    pub restore_status: String,
+    pub restoring: bool,
 }
 
 impl Default for ReportState {
@@ -1340,6 +1359,18 @@ impl Default for ReportState {
 }
 
 impl ReportState {
+    /// The redaction selection as one policy value. The projection is applied
+    /// in the worker, never against the case.
+    pub fn redaction(&self) -> RedactionPolicy {
+        RedactionPolicy {
+            case_label: self.redact_case_label,
+            source_paths: self.redact_source_paths,
+            object_paths: self.redact_object_paths,
+            timeline_summaries: self.redact_timeline_summaries,
+            timeline_hosts: self.redact_timeline_hosts,
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             acquisition: None,
@@ -1359,6 +1390,18 @@ impl ReportState {
             sign_passphrase: String::new(),
             sign_status: "no manifest signed yet".into(),
             signing: false,
+            redact_case_label: false,
+            redact_source_paths: false,
+            redact_object_paths: false,
+            redact_timeline_summaries: false,
+            redact_timeline_hosts: false,
+            backup_output: String::new(),
+            backup_status: "no backup taken yet".into(),
+            backing_up: false,
+            restore_backup: String::new(),
+            restore_destination: String::new(),
+            restore_status: "no backup restored yet".into(),
+            restoring: false,
         }
     }
 
@@ -1371,6 +1414,10 @@ impl ReportState {
         self.verifying = false;
         self.sign_status = "no manifest signed yet".into();
         self.signing = false;
+        self.backup_status = "no backup taken yet".into();
+        self.backing_up = false;
+        self.restore_status = "no backup restored yet".into();
+        self.restoring = false;
         self.status = if acquisitions.is_empty() {
             "record a capture before exporting a report".into()
         } else {
@@ -1716,7 +1763,15 @@ impl AppState {
         let revision = non_empty(&self.report.revision);
         let event_limit = self.report.event_limit.clamp(1, 10_000);
         let report_id = non_empty(&self.report.report_id);
-        self.report.status = "exporting report…".into();
+        let redaction = self.report.redaction();
+        self.report.status = if redaction.any() {
+            format!(
+                "exporting redacted report ({} selected)…",
+                redaction.selected().join(", ")
+            )
+        } else {
+            "exporting report…".into()
+        };
         self.start(|id| Command::Report {
             id,
             case_directory,
@@ -1725,6 +1780,7 @@ impl AppState {
             revision,
             event_limit,
             report_id,
+            redaction,
         });
     }
 
@@ -1930,6 +1986,12 @@ impl AppState {
                     self.report.sign_status = format!("signing failed: {code}: {message}");
                 } else if phase == JobPhase::Report {
                     self.report.status = format!("export failed: {code}: {message}");
+                } else if phase == JobPhase::Backup {
+                    self.report.backing_up = false;
+                    self.report.backup_status = format!("backup failed: {code}: {message}");
+                } else if phase == JobPhase::Restore {
+                    self.report.restoring = false;
+                    self.report.restore_status = format!("restore failed: {code}: {message}");
                 }
             }
         }
@@ -2112,12 +2174,22 @@ impl AppState {
                 objects,
                 events,
                 gaps,
+                csv,
+                redacted,
+                redaction,
             } => {
                 self.job.message = format!("report {report_id} published");
                 self.notice_info(format!(
                     "report {report_id} published: {objects} object(s), {events} event(s), {gaps} gap(s)"
                 ));
-                self.report.status = format!("published {report_id}");
+                self.report.status = match &redaction {
+                    Some(summary) => {
+                        format!(
+                            "published {report_id} (redacted: {summary}; ledger lists fields and counts only)"
+                        )
+                    }
+                    None => format!("published {report_id}"),
+                };
                 self.report.last = Some(ReportSummary {
                     report_id,
                     directory,
@@ -2126,6 +2198,40 @@ impl AppState {
                     objects,
                     events,
                     gaps,
+                    csv: Some(csv),
+                    redacted,
+                });
+            }
+            Outcome::BackedUp {
+                directory,
+                case_id,
+                files,
+                total_bytes,
+            } => {
+                self.job.message = "case backed up".into();
+                self.notice_info(format!(
+                    "backup written: {directory} ({files} file(s), {total_bytes} byte(s))"
+                ));
+                self.report.backing_up = false;
+                self.report.backup_status = format!(
+                    "backed up case {case_id}: {files} file(s), {total_bytes} byte(s) in {directory}"
+                );
+            }
+            Outcome::Restored {
+                directory,
+                case_id,
+                objects,
+                manifests,
+            } => {
+                self.job.message = "case restored".into();
+                self.notice_info(format!("restored case {case_id} at {directory}"));
+                self.report.restoring = false;
+                self.report.restore_status = format!(
+                    "restored {objects} object(s) and {manifests} manifest file(s); opening the case"
+                );
+                self.start(|id| Command::OpenCase {
+                    id,
+                    directory: directory.clone(),
                 });
             }
             Outcome::ReportCancelled => {
@@ -2200,6 +2306,55 @@ impl AppState {
                 );
             }
         }
+    }
+
+    /// Take a portable backup of the open case into `backup_output`.
+    pub fn backup_case(&mut self) {
+        if self.is_running() {
+            self.notice_error("a job is already running; cancel it before backing up");
+            return;
+        }
+        let Some(case_directory) = self.case_directory() else {
+            self.notice_error("open a case before backing it up");
+            return;
+        };
+        if self.report.backup_output.trim().is_empty() {
+            self.notice_error("enter a directory that will receive the backup");
+            return;
+        }
+        let output = self.report.backup_output.trim().to_string();
+        self.report.backing_up = true;
+        self.report.backup_status = "backing up the case…".into();
+        self.start(|id| Command::Backup {
+            id,
+            case_directory,
+            output,
+        });
+    }
+
+    /// Restore a verified backup into a new directory, then open it.
+    pub fn restore_case(&mut self) {
+        if self.is_running() {
+            self.notice_error("a job is already running; cancel it before restoring");
+            return;
+        }
+        if self.report.restore_backup.trim().is_empty() {
+            self.notice_error("enter the backup directory to restore");
+            return;
+        }
+        if self.report.restore_destination.trim().is_empty() {
+            self.notice_error("enter a destination directory for the restored case");
+            return;
+        }
+        let backup = self.report.restore_backup.trim().to_string();
+        let destination = self.report.restore_destination.trim().to_string();
+        self.report.restoring = true;
+        self.report.restore_status = "verifying and restoring the backup…".into();
+        self.start(|id| Command::Restore {
+            id,
+            backup,
+            destination,
+        });
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {

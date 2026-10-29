@@ -447,3 +447,38 @@ The sidecar never embeds the manifest and never contains the private key.
 uppercase 64-character fingerprint per line, `#` comments and blank lines
 ignored, every other line rejected with its line number. Trust is a preference,
 not evidence, and it is excluded from portable case backups (P9.2).
+
+## Portable package and backup inventories (P9.2)
+
+Both portable formats use the same strict inventory rules: relative paths with
+`/` separators, no `..`, no absolute paths, no backslashes or control
+characters, no duplicates, no symlinks, exact byte lengths, and SHA-256 over the
+exact bytes. A file present but unlisted is a rejection.
+
+**Package** (`ghosttrace-package/1`, `package.json`):
+
+```json
+{
+  "format": "ghosttrace-package/1",
+  "package_id": "package-acq-…-<unix>",
+  "case_id": "…", "case_label": "…", "acquisition_id": "…", "revision": "…",
+  "redacted": false, "redaction": null, "signature": "unsigned",
+  "files": [{"path": "report.json", "role": "report",
+             "sha256": "<64 hex>", "byte_length": 1234}],
+  "limitations": ["…"]
+}
+```
+
+The directory also holds `README.txt`, `report.json`, `report.html`,
+`report.csv`, `objects.csv`, `manifest.json`, an optional
+`manifest.json.sig.json`, and `objects/<sha256>` (content-addressed, so no
+recorded path can escape the directory). With a signing key the inventory is
+signed as `package.json.sig.json` using the P9.1 envelope; the signed message is
+the same domain separation over the SHA-256 of the complete `package.json`.
+
+**Backup** (`ghosttrace-backup/1`, `backup.json`): the same inventory shape plus
+`schema_version` and an `excluded` list, with `case.sqlite` (a consistent online
+backup, checkpointed to one file), `case.toml`, `manifests/`, and
+`objects/sha256/<bucket>/<hex>`. Backups are unsigned by design; restore verifies
+every digest and reference before publishing. Signing keys, trusted-key lists,
+generated reports, diagnostics, and staging artifacts are excluded.

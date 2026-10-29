@@ -30,6 +30,7 @@ use ghosttrace_core::integrity::keys::{generate_key_file, load_key_file};
 use ghosttrace_core::integrity::signature::{
     self, KeyTrust, ManifestStatus, SignatureEnvelope, SignatureStatus, TrustedKeys, sidecar_path,
 };
+use ghosttrace_core::reports::redact::RedactionPolicy;
 use ghosttrace_core::reports::{self, ReportContext, ReportSelection};
 use ghosttrace_core::service::{CaseSession, CreateCaseSpec};
 
@@ -52,6 +53,8 @@ pub enum JobPhase {
     Report,
     Verify,
     Sign,
+    Backup,
+    Restore,
 }
 
 impl JobPhase {
@@ -68,6 +71,8 @@ impl JobPhase {
             JobPhase::Report => "export report",
             JobPhase::Verify => "verify manifest",
             JobPhase::Sign => "sign manifest",
+            JobPhase::Backup => "back up case",
+            JobPhase::Restore => "restore backup",
         }
     }
 }
@@ -138,6 +143,7 @@ pub enum Command {
         revision: Option<String>,
         event_limit: u32,
         report_id: Option<String>,
+        redaction: RedactionPolicy,
     },
     /// Verify the stored bytes of one acquisition manifest and its detached
     /// signature when one is present or named.
@@ -158,6 +164,18 @@ pub enum Command {
         acquisition_id: Option<String>,
         key_path: String,
         passphrase: Secret,
+    },
+    /// Take a portable, verified-on-restore backup of the open case.
+    Backup {
+        id: JobId,
+        case_directory: String,
+        output: String,
+    },
+    /// Restore a verified backup into a new case directory.
+    Restore {
+        id: JobId,
+        backup: String,
+        destination: String,
     },
 }
 
@@ -195,7 +213,9 @@ impl Command {
             | Command::SaveView { id, .. }
             | Command::Report { id, .. }
             | Command::Verify { id, .. }
-            | Command::Sign { id, .. } => *id,
+            | Command::Sign { id, .. }
+            | Command::Backup { id, .. }
+            | Command::Restore { id, .. } => *id,
         }
     }
 
@@ -212,6 +232,8 @@ impl Command {
             Command::Report { .. } => JobPhase::Report,
             Command::Verify { .. } => JobPhase::Verify,
             Command::Sign { .. } => JobPhase::Sign,
+            Command::Backup { .. } => JobPhase::Backup,
+            Command::Restore { .. } => JobPhase::Restore,
         }
     }
 }
@@ -274,6 +296,9 @@ pub enum Outcome {
         objects: usize,
         events: usize,
         gaps: u64,
+        csv: String,
+        redacted: bool,
+        redaction: Option<String>,
     },
     /// The report job observed a cancel request and published nothing.
     ReportCancelled,
@@ -297,6 +322,18 @@ pub enum Outcome {
         signature: String,
         public_key: String,
         key_fingerprint: String,
+    },
+    BackedUp {
+        directory: String,
+        case_id: String,
+        files: usize,
+        total_bytes: u64,
+    },
+    Restored {
+        directory: String,
+        case_id: String,
+        objects: usize,
+        manifests: usize,
     },
 }
 
@@ -504,6 +541,7 @@ fn worker(commands: Receiver<Command>, events: Sender<CommandEvent>, registry: A
                 revision,
                 event_limit,
                 report_id,
+                redaction,
                 ..
             } => export_report(
                 &registry,
@@ -514,6 +552,7 @@ fn worker(commands: Receiver<Command>, events: Sender<CommandEvent>, registry: A
                 revision,
                 event_limit,
                 report_id,
+                redaction,
             ),
             Command::Verify {
                 case_directory,
@@ -543,6 +582,16 @@ fn worker(commands: Receiver<Command>, events: Sender<CommandEvent>, registry: A
                 &key_path,
                 &passphrase,
             ),
+            Command::Backup {
+                case_directory,
+                output,
+                ..
+            } => backup_case_command(&case_directory, &output),
+            Command::Restore {
+                backup,
+                destination,
+                ..
+            } => restore_case_command(&backup, &destination),
         };
         registry.finish(id);
         let event = match result {
@@ -787,6 +836,7 @@ fn export_report(
     revision: Option<String>,
     event_limit: u32,
     report_id: Option<String>,
+    redaction: RedactionPolicy,
 ) -> CoreResult<Outcome> {
     let cancelled = Arc::new(AtomicBool::new(false));
     registry.register(
@@ -830,7 +880,25 @@ fn export_report(
     if cancelled.load(Ordering::Relaxed) {
         return Ok(Outcome::ReportCancelled);
     }
-    let published = reports::publish(&report, Path::new(output))?;
+    let (report, ledger) = if redaction.any() {
+        let (redacted, ledger) =
+            ghosttrace_core::reports::redact::redact_report(&report, &redaction);
+        (redacted, Some(ledger))
+    } else {
+        (report, None)
+    };
+    let mut extras: Vec<(String, String)> = vec![(
+        "report.csv".into(),
+        ghosttrace_core::reports::csv::timeline_csv(&report),
+    )];
+    if let Some(ledger) = &ledger {
+        extras.push(("redaction.json".into(), ledger.to_json()?));
+    }
+    let extras_ref: Vec<(&str, &str)> = extras
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    let published = reports::publish_with(&report, Path::new(output), &extras_ref)?;
     Ok(Outcome::ReportPublished {
         report_id: report.report_id.clone(),
         directory: native_path(&published.directory).encoded(),
@@ -839,6 +907,34 @@ fn export_report(
         objects: report.objects.len(),
         events: report.timeline.len(),
         gaps: report.coverage.total_gaps(),
+        csv: native_path(&published.directory.join("report.csv")).encoded(),
+        redacted: ledger.is_some(),
+        redaction: ledger.as_ref().map(|ledger| ledger.summary()),
+    })
+}
+
+fn backup_case_command(case_directory: &str, output: &str) -> CoreResult<Outcome> {
+    let published = ghosttrace_core::storage::backup::backup_case(
+        Path::new(case_directory),
+        Path::new(output),
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    Ok(Outcome::BackedUp {
+        directory: native_path(&published.directory).encoded(),
+        case_id: published.case_id,
+        files: published.files.len(),
+        total_bytes: published.total_bytes,
+    })
+}
+
+fn restore_case_command(backup: &str, destination: &str) -> CoreResult<Outcome> {
+    let restored =
+        ghosttrace_core::storage::backup::restore_case(Path::new(backup), Path::new(destination))?;
+    Ok(Outcome::Restored {
+        directory: native_path(&restored.directory).encoded(),
+        case_id: restored.case_id,
+        objects: restored.objects,
+        manifests: restored.manifests,
     })
 }
 

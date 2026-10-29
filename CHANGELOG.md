@@ -164,6 +164,22 @@ file records implemented capability only.
   the join and a query-plan test guards it. New core contracts:
   `event_detail()`, `event_histogram()`, and display escaping
   (`docs/gui-guide.md`).
+- P9.2 (2026-10-29): redacted exports, spreadsheet-safe CSV, portable packages,
+  and verified backup/restore — `report --redact`/`--csv` publishes a projection
+  with a value-free `redaction.json` ledger (field names and counts only) while
+  the case and stored bytes stay untouched. CSV escapes control characters and
+  neutralizes `=`/`+`/`-`/`@` formula prefixes; JSON stays exact. `package`
+  builds a self-describing directory (manifest, cited objects, report JSON/HTML/
+  CSV, verifier README, SHA-256 inventory) that `verify-package` checks
+  independently, rejecting missing, modified, unlisted, duplicate, or escaping
+  paths; the inventory can be signed with the P9.1 envelope. `backup` takes a
+  consistent online SQLite snapshot plus every referenced object, config, and
+  manifest with an inventory, and `restore` re-verifies digests, integrity,
+  schema, and every object reference in a private staging directory before
+  publishing a new case. The desktop report screen exposes the redaction
+  selection, CSV export, and backup/restore jobs. The P9 gate passes: an
+  untampered package is accepted, a modified byte is rejected, and a relocated
+  case reopens and verifies.
 - P9.1 (2026-10-29): signed evidence manifests with explicit key trust —
   detached Ed25519 signatures over the exact manifest bytes
   (`b"GhostTrace manifest v1"` + NUL + SHA-256 of the complete file) in a

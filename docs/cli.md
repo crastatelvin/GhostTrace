@@ -332,10 +332,18 @@ Builds a versioned report from recorded rows only and publishes it atomically:
 
 ```bash
 ghosttrace report --case <DIR>.ghosttrace-case --output /cases/reports \
-  [--acquisition <ID>] [--revision RUN_ID] [--limit 500] [--report-id NAME]
+  [--acquisition <ID>] [--revision RUN_ID] [--limit 500] [--report-id NAME] \
+  [--csv] [--redact <CATEGORY>]...
 ```
 
-Output: `{"report_id","format","directory","json","html","objects","events","gaps"}`.
+Output: `{"report_id","format","directory","json","html","objects","events","gaps","csv","redacted","redaction"}`.
+
+`--redact` categories: `case-label`, `source-paths`, `object-paths`,
+`timeline-summaries`, `timeline-hosts`. Each selected value is replaced with
+`[redacted]` in the published copy; the case, the database, and the stored
+evidence are never changed. A `redaction.json` ledger is written beside the
+report and records only field names and counts — never the removed text.
+`--csv` adds `report.csv`, a spreadsheet-safe timeline projection.
 The directory holds `report.json` (full fidelity, `ghosttrace-report/1`) and
 `report.html` (self-contained, no scripts/links/remote resources, all values
 escaped, control/bidi characters rendered visibly).
@@ -351,6 +359,64 @@ records another revision instead of replacing the earlier one, pinning makes
 the report reproducible — building the same selection again yields the same
 timeline. The pinned run id appears in `report.json` (`revision`) and in the
 HTML provenance line.
+
+## `package`
+
+Builds a directory a second person can verify offline: the acquisition
+manifest, the stored objects the report cites, the report (JSON, HTML, CSV),
+a verifier `README.txt`, and a SHA-256 inventory over every file.
+
+```bash
+ghosttrace package --case <DIR>.ghosttrace-case --output /cases/packages \
+  [--acquisition <ID>] [--revision RUN_ID] [--limit 500] \
+  [--manifest FILE] [--signature FILE] [--redact <CATEGORY>]... [--key KEY.pem]
+```
+
+With `--key`, `package.json` is signed with the same detached Ed25519 envelope
+as a manifest (`package.json.sig.json`); without it the package is honestly
+unsigned. Output: `{"package_id","directory","inventory","files","total_bytes",
+"signed","public_key","key_fingerprint","redacted","redaction"}`. An existing
+package directory is never overwritten.
+
+## `verify-package`
+
+```bash
+ghosttrace verify-package --package <DIR> [--trust ~/trusted-keys.txt]
+```
+
+Verifies every listed file's exact length and SHA-256, rejects missing,
+modified, unlisted, duplicate, or escaping paths, and checks the inventory
+signature when present. Exit `0` accepted, `4` the package did not verify,
+`1` the inventory or directory could not be read, `2` invalid usage. A valid
+signature from a key that is not in the trust file is reported as
+`"signature":"valid","key_trust":"untrusted"` and is still accepted.
+
+## `backup`
+
+```bash
+ghosttrace backup --case <DIR>.ghosttrace-case --output /cases/backups
+```
+
+Takes a consistent online SQLite backup (committed WAL data included) plus every
+referenced immutable object, `case.toml`, and the manifests, with a `backup.json`
+inventory over all of it. Signing keys and trusted-key lists are excluded on
+purpose. Output: `{"backup_id","directory","inventory","case_id",
+"schema_version","files","total_bytes"}`. Publication is atomic; an existing
+backup is never overwritten.
+
+## `restore`
+
+```bash
+ghosttrace restore --backup <BACKUP_DIR> --destination <NEW>.ghosttrace-case
+```
+
+Verifies the inventory, copies into a private sibling staging directory,
+re-verifies every file, checks `PRAGMA integrity_check`, the schema version, the
+case id, and every object reference, and only then renames the new case into
+place. The destination must not exist. Object paths in the case are relative, so
+a relocated case opens with its native paths and provenance intact. Exit `0`
+restored, `4` the backup is missing or corrupt, `1` a storage failure, `2`
+invalid usage.
 
 ## Packaging an early build
 
