@@ -11,7 +11,7 @@ instead of silently converting gaps into results.
 
 ## Status
 
-**Release candidate 1.0.0-rc.1, Linux x86_64 verified.** P0–P10 are complete,
+**Release candidate 1.0.0-rc.1 (draft), Linux x86_64 verified.** P0–P10 are complete,
 and P11 now provides the release-candidate pipeline: a checksummed CLI/desktop
 archive with generated shell completions, a CycloneDX SBOM, tracked samples,
 offline guides, a source archive, a tag-triggered workflow with pinned actions
