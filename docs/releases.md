@@ -214,8 +214,7 @@ python3 -m json.tool ghosttrace-<version>-<target>/build-info.json
 python3 -m json.tool ghosttrace-<version>-<target>/sbom.cdx.json >/dev/null
 ```
 
-`sbom.cdx.json` is CycloneDX 1.5 generated from `cargo metadata --locked
---offline`; it records the resolved package name, version, Cargo checksum,
+`sbom.cdx.json` is CycloneDX 1.5 generated from `cargo metadata --locked`; it records the resolved package name, version, Cargo checksum,
 license string, and purl. It is an inventory, not a vulnerability verdict.
 
 When the workflow attests provenance, verify the archive against its GitHub

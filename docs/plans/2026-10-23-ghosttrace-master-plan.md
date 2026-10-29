@@ -1392,7 +1392,7 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
   (2026-10-29).
 - `xtask package` writes a 46-file archive with both binaries, licences, all
   user guides, tracked samples, `help.txt`, five generated completion scripts,
-  a 601-component CycloneDX 1.5 SBOM from `cargo metadata --locked --offline`,
+  a 601-component CycloneDX 1.5 SBOM from `cargo metadata --locked`,
   `build-info.json`, and `RELEASE-NOTES.md`; the archive SHA-256 verifies.
   `ghosttrace completions <shell>` is the one non-JSON stdout command and
   generates the same scripts from the packaged binary.

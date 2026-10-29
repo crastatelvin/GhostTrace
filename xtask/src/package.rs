@@ -292,7 +292,7 @@ fn copy_tree(source: &Path, target: &Path) -> Result<(), String> {
 /// No network is used and no hand-maintained dependency list can drift.
 fn write_sbom(root: &Path, staging: &Path, version: &str) -> Result<(), String> {
     let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--locked", "--offline"])
+        .args(["metadata", "--format-version", "1", "--locked"])
         .current_dir(root)
         .output()
         .map_err(|error| format!("cargo metadata: {error}"))?;
