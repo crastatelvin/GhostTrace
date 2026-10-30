@@ -85,8 +85,9 @@ failed/partial run, never as a silent empty success.
   VoiceOver, and Orca sessions and Windows Terminal/macOS terminal smoke checks
   remain open gate items. Do not claim screen-reader conformance until those
   runs are recorded.
-- `wgpu` rendering compiles but has not been verified on every host; glow is the
-  default.
+- `wgpu` rendering was verified once on the recording host under a software
+  Vulkan ICD (Xvfb + lavapipe), not on hardware drivers, and not on every
+  host; glow remains the default.
 
 ## Performance
 
@@ -94,8 +95,10 @@ Measured numbers are for one host, one filesystem, and one synthetic corpus.
 They are regression baselines, not universal throughput promises. The 1M-event
 ingest target is narrowed to the measured value in
 [performance.md](performance.md); the histogram deliberately scans the
-revision, and the entity build is capped at 200,000 events. A 10 GiB /
-100,000-file capture corpus and Windows/macOS measurements were not run on the
+revision, and the entity build is capped at 200,000 events. The
+10 GiB / 100,000-file capture corpus was run on the recording host (ext4;
+its synthetic files deduplicate, so it measures copy+hash+coverage cost, not
+10 GiB of unique storage); Windows/macOS measurements were not run on the
 recording host.
 
 ## Network and privacy

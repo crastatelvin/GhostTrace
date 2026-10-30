@@ -582,7 +582,7 @@ Reference profile: local SSD, 8 logical cores, 16 GiB RAM; record exact OS, CPU,
 
 - Timeline first-page indexed query: target p95 ≤ 200 ms warm, ≤ 1 s cold on the reference profile.
 - GUI interactions: target most frames ≤ 16.7 ms while imports run; no operation should block input for > 100 ms.
-- Structured JSONL ingest: starting target ≥ 25,000 normalized events/s on the reference profile, measured with writing/indexing included. P10.2 measured 5,150 events/s on a 6-core tmpfs host (3 rows and five indexes per event, FTS trigger, `synchronous=FULL`); the advertised target is narrowed to 5,000 events/s until a bulk-load path with deferred index rebuilds exists (see `docs/performance.md`).
+- Structured JSONL ingest: starting target ≥ 25,000 normalized events/s on the reference profile, measured with writing/indexing included. P10.2 measured 5,150 events/s on a 6-core tmpfs host (3 rows and five indexes per event, FTS trigger, `synchronous=FULL`); the advertised target is narrowed to 5,000 events/s until a bulk-load path with deferred index rebuilds exists (see `docs/performance.md`). The 5,000/s figure belongs to the RAM-backed tmpfs profile: the same 1M-event import onto this host's ext4 SSD measures 2,019 events/s, because durable `synchronous=FULL` commits cost real disk writes.
 - Capture hashing: report MiB/s and files/s separately; compare with single-worker SHA-256 baseline, not a universal throughput promise.
 - Memory: target core analysis RSS ≤ 512 MiB on the 1-million-event dataset, with desktop/worker memory measured separately.
 - Relationship queries: bounded neighborhood p95 target ≤ 300 ms warm.
@@ -1435,11 +1435,19 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
   racing it, and the scan-cancel test waits for the CLI start marker instead of
   sleeping 300 ms. The publish job checks out the tag because `gh release
   create --verify-tag` needs a git repository.
+- `wgpu` renderer verified on this host (2026-10-30): the desktop launched as
+  `--renderer wgpu` (wgpu-only release build) under Xvfb with Mesa's lavapipe
+  Vulkan ICD, ran without errors, and painted the case-creation screen —
+  captured via `ffmpeg` x11grab and confirmed non-blank. This is one software
+  Vulkan configuration on Linux x86_64, not hardware-driver coverage; glow
+  remains the default.
+- 10 GiB / 100,000-file capture corpus run on this host — see the P10.2
+  record above for both the combined (9.72 GiB, ext4) and capture-only
+  (10.0 GiB) results.
 - Open: the draft prerelease is not publicly published (owner authorization),
   Windows/macOS builds and terminal smoke checks, live NVDA/VoiceOver/Orca
-  sessions, the 10 GiB capture corpus, the unverified `wgpu` renderer, and CLI
-  annotations. `1.0.0` is not tagged; the candidate notes record these instead
-  of claiming support.
+  sessions, and CLI annotations. `1.0.0` is not tagged; the candidate notes
+  record these instead of claiming support.
 
 ### P10.3 verification record
 
@@ -1494,9 +1502,21 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
   checkpoints the WAL best-effort before snapshotting.
 - Honest narrowing: the 25,000 events/s target is not met on this profile. The
   remaining cost is per-row SQLite index/FTS maintenance and durable commits;
-  a bulk-load path would change crash semantics and is deferred. Open: full
-  10 GiB / 100,000-file capture corpus, Windows/macOS measurements, and
-  screen-reader runs remain P10/P11 gate items.
+  a bulk-load path would change crash semantics and is deferred. The same
+  1M-event import onto this host's ext4 SSD measures 2,019 events/s; the
+  5,000/s advertised figure holds only for the RAM-backed tmpfs profile.
+- 10 GiB / 100,000-file capture corpus (2026-10-30, ext4, release
+  `1.0.0-rc.1`): combined 1M-event + 100,000-file run captured
+  10,437,297,642 bytes (9.72 GiB) at 52.2 MiB/s / 524 files/s, ingested
+  1,000,000 events at 2,019 events/s, backed up 2,072,969,378 bytes in
+  90.4 s (+ 10.1 s verify, 31 files), peak RSS 439 MiB; a capture-only run
+  over exactly 10,737,400,000 bytes (10.0 GiB) and 100,001 files completed
+  in 267.0 s (38.3 MiB/s, 375 files/s) with 0 coverage gaps and peak RSS
+  441 MiB. The corpora deduplicate to 28 published objects; rates therefore
+  measure copy+hash+dedup over the full corpus. Full numbers:
+  `docs/performance.md`.
+- Open: Windows/macOS measurements and screen-reader runs remain P10/P11
+  gate items.
 
 ### P9.2 verification record
 

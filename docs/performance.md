@@ -34,7 +34,7 @@ runs on the same host.
 | Bounded relationships, warm p95 | ≤ 300 ms | 0.69 ms p95 (1M, 0 rows); 1.38 ms p95 (20k, 80 rows) | Met on populated graphs |
 | GUI frame while rendering a full timeline | most ≤ 16.7 ms, none > 100 ms | p50 0.90 ms, p95 0.92 ms, max 0.96 ms | Met |
 | Cancellation acknowledgment | ≤ 250 ms, work stops ≤ 2 s | structural tests; see below | Met structurally |
-| Capture hashing | report MiB/s and files/s, no universal promise | 212.9 MiB/s, 227 files/s (1M corpus); 184.6 MiB/s, 34.5 files/s (large-file corpus) | Reported |
+| Capture hashing | report MiB/s and files/s, no universal promise | 212.9 MiB/s, 227 files/s (1M corpus); 184.6 MiB/s, 34.5 files/s (large-file corpus); 52.2 MiB/s, 524 files/s (100k-file ext4, combined run); 38.3 MiB/s, 375 files/s (10-GiB ext4, capture-only) | Reported |
 
 The ingest target is the only unmet number. It is narrowed in this document
 rather than quietly dropped: the advertised figure for this profile is
@@ -61,6 +61,48 @@ Capture on the large-file corpus (10 × 64 MiB plus the small files): 12 files,
 67,301,154 bytes in 0.348 s (184.6 MiB/s, 34.5 files/s). File rate falls with
 file size because hashing and copying dominate; the two rates are reported
 separately, as the plan requires.
+
+### 10-GiB / 100,000-file corpus (2026-10-30, ext4)
+
+The plan asks for a 10-GiB / 100,000-file capture corpus. It was run in two
+parts, both release builds of `1.0.0-rc.1` on this host with the case and
+corpus on `/var/tmp` — ext4 on the same SSD — not tmpfs. Cache state: the
+corpus was written immediately before capture, so the page cache was partially
+warm; both runs were the only heavy work on the machine.
+
+| Run | Corpus | Result |
+|---|---|---|
+| Combined (`xtask scale run --skip-graph`, seed 1) | 1M JSONL events + 100,000 × 102,400-byte files | capture 10,437,297,642 bytes (9.72 GiB), 100,001 files, 190.7 s = 52.2 MiB/s, 524 files/s; ingest 1,000,000 events in 495.4 s = 2,019 events/s; backup 2,072,969,378 bytes in 90.4 s + 10.1 s verification (31 files); peak RSS 439 MiB |
+| Capture-only (`ghosttrace scan`, seed 1) | 100,000 × 107,374-byte files, no events | 10,737,400,000 bytes (10.0 GiB), 100,001 files, 267.0 s = 38.3 MiB/s, 375 files/s, 0 coverage gaps, state `completed`; peak RSS 441 MiB |
+
+The combined run captured 9.72 GiB, not a full 10 GiB; the capture-only run
+closes that wording at 10,737,400,000 bytes. Honest findings:
+
+1. **The ingest target is filesystem-dependent.** The 5,150 events/s figure
+   above was measured with the case on tmpfs, where a `synchronous=FULL`
+   commit costs nothing. The same build importing the same 1M events onto
+   ext4 measures **2,019 events/s**: durable commits are the price in the
+   synthetic-corpus path, exactly as the optimization narrative says, and the
+   disk is where that price is paid. The 5,000 events/s advertised target
+   holds for the RAM-backed profile in the table above; on this host's SSD the
+   durable-write figure is about 2,000 events/s. Query timings shift the same
+   way — first page p95 3.64 ms (vs 0.71 ms), histogram p95 602 ms (vs 376 ms)
+   — but stay inside their targets.
+2. **The 100,000-file corpora measure per-file cost, and dedup means published
+   bytes ≠ captured bytes.** Every file is read, hashed, and staged before
+   publication, then deduplicated by content digest; the synthetic files vary
+   only in their first byte, so the combined run's full 9.72 GiB pass
+   published 28 objects totalling 191 MiB. The reported rates are therefore copy+hash+dedup
+   throughput over the full corpus, not unique-storage throughput, and the
+   38–52 MiB/s byte rates on 100 KiB files are dominated by per-file staging
+   plus hashing rather than by raw copy. No correctness gap was introduced:
+   coverage reported 100,001 captured, 0 gaps, `completed`.
+3. **Peak RSS triples with 100,000 files and stays under the target.** The
+   capture-only run — which ingests nothing — peaked at 441 MiB (451,676 KiB),
+   and the combined run at 439 MiB, against 69.5 MiB for the tmpfs
+   1M-ingest-only run. Both are under the 512 MiB target, but the headroom is
+   smaller than the 1M-ingest figure alone suggests; the cost belongs to the
+   100,000-file capture state in this build, not to ingest.
 
 The import is writer-bound, not parser-bound. Three measured fixes were needed
 to reach the published number:
@@ -175,14 +217,18 @@ over.
 
 ## Limitations
 
-- One host, one filesystem. `/tmp` is RAM-backed here, so storage latency is
-  better than a spinning disk or a network share.
+- One host, two filesystems. `/tmp` is RAM-backed here, so storage latency is
+  better than a spinning disk or a network share; `xtask scale run` was also
+  re-run with the case on ext4 (100,000-file section), which is the honest
+  number for durable writes.
 - The 1M corpus is synthetic and benign: short ASCII messages, no hostile
   parser payloads, no personal data.
 - “Cold” is a fresh reader over a warm OS cache, not a dropped page cache.
-- The plan's 10 GiB / 100,000-file capture corpus was not run in full on this
-  host; a large-file corpus was measured instead and per-file/per-MiB rates are
-  reported so the cost can be extrapolated.
+- The plan's 10 GiB / 100,000-file capture corpus has been run (100,000-file
+  section above). It is synthetic: files differ only in their first byte, so
+  deduplication publishes 28 objects from 9.72 GiB of copied+hashed bytes.
+  Windows and macOS were still not measured; only Linux x86_64 is a tested
+  target in this revision.
 - The 1M corpus does not exercise populated relationship queries under the
   default bucket bounds; the 20k run does. Both are reported.
 - Windows and macOS were not measured; only Linux x86_64 is a tested target in

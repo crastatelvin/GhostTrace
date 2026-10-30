@@ -107,9 +107,12 @@ are in [limitations.md](limitations.md).
   rootless Xwayland server (`XkbSetMap BadValue`) and NVDA/VoiceOver need their
   own machines. This remains a P10 release-target gate; it is not an
   accessibility certification.
-- Renderer status: glow is the default and has been run on this host. The wgpu
-  feature compiles in `xtask check`; rendering through wgpu was not exercised in
-  this session, so it is built but not claimed as verified.
+- Renderer status: glow is the default and has been run on this host. `wgpu`
+  was rendering-verified on this host (2026-10-30): a wgpu-only release build
+  launched with `--renderer wgpu` under Xvfb with Mesa's lavapipe Vulkan ICD,
+  ran without errors, and painted the case-creation screen (frame captured
+  with `ffmpeg` x11grab). This is one software Vulkan configuration, not
+  hardware-driver coverage.
 - Desktop report export is unredacted until P9.2. The report screen states this
   before the export control.
 
