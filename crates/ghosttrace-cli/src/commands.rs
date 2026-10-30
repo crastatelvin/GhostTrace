@@ -12,6 +12,7 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
+use ghosttrace_core::analysis::annotations::AppendAnnotation;
 use ghosttrace_core::analysis::diff::{DiffQuery, DiffReport, compare_acquisitions};
 use ghosttrace_core::analysis::rules::{AnalysisRequest, RuleConfig};
 use ghosttrace_core::capture::copy::{
@@ -21,7 +22,7 @@ use ghosttrace_core::capture::{CaptureRoot, CaptureSpec};
 use ghosttrace_core::domain::case::AcquisitionMethod;
 use ghosttrace_core::domain::path::NativePath;
 use ghosttrace_core::domain::query::{EventQuery, EventRow, TimeCursor};
-use ghosttrace_core::error::CoreError;
+use ghosttrace_core::error::{CoreError, CoreResult};
 use ghosttrace_core::ingest::{
     self, DEFAULT_MAX_RECORD_BYTES, DEFAULT_MAX_RECORDS, ImportRequest, JsonlConfig, LogFormat,
     SyslogConfig, TimeFormat,
@@ -154,6 +155,11 @@ pub enum Cli {
  a bound truncated the pass, and 2 means the rule parameters were invalid."
     )]
     Analyze(AnalyzeArgs),
+    /// Record or read an analyst annotation (note, tags, or disposition).
+    #[command(
+        long_about = "Record or read an analyst annotation on one event or finding.\n\nNotes, tags, and dispositions are append-only revisions: each append records the revision it supersedes, and an edit made against a stale revision is reported as a conflict instead of overwriting it. A disposition applies to a finding; a bookmark is the recorded `bookmark` tag on an event. Nothing here edits the recorded evidence.\n\nExit 0 means the revision was appended (or the history was read), 2 means the arguments or target were rejected, and 1 means the append failed."
+    )]
+    Annotate(AnnotateArgs),
     /// Internal: serve one isolated parse job over stdin/stdout.
     #[command(hide = true)]
     Worker(WorkerArgs),
@@ -202,6 +208,101 @@ pub struct AnalyzeArgs {
     /// are rejected).
     #[arg(long)]
     pub rules: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct AnnotateArgs {
+    /// Existing case directory.
+    #[arg(long)]
+    pub case: PathBuf,
+    /// What to do with the annotation.
+    #[command(subcommand)]
+    pub command: AnnotateCommand,
+}
+
+#[derive(Subcommand)]
+pub enum AnnotateCommand {
+    /// Append one annotation revision (append-only; conflicts never overwrite).
+    Record {
+        /// Target event id. Exactly one of --event or --finding is required.
+        #[arg(long)]
+        event: Option<String>,
+        /// Target finding id. Exactly one of --event or --finding is required.
+        #[arg(long)]
+        finding: Option<String>,
+        /// Author label recorded on this revision.
+        #[arg(long)]
+        author: String,
+        /// Note text. Optional; a disposition change does not require text.
+        #[arg(long)]
+        text: Option<String>,
+        /// Comma-separated tags (each up to 64 characters, at most 16).
+        #[arg(long)]
+        tags: Option<String>,
+        /// Finding disposition. Only valid with --finding.
+        #[arg(long, value_enum)]
+        disposition: Option<DispositionArg>,
+    },
+    /// Print the append-only revision history for one target.
+    History {
+        /// Target event id. Exactly one of --event or --finding is required.
+        #[arg(long)]
+        event: Option<String>,
+        /// Target finding id. Exactly one of --event or --finding is required.
+        #[arg(long)]
+        finding: Option<String>,
+        /// Maximum revisions to print (1..=1000, newest first).
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+}
+
+/// The append-only history of one target as the CLI prints it. The core type
+/// is domain data, not a wire contract, so the CLI mirrors it here.
+#[derive(Serialize)]
+pub(crate) struct AnnotationRow {
+    pub revision_id: i64,
+    pub previous_revision: Option<i64>,
+    pub author_label: String,
+    pub created_seconds: i64,
+    pub text: String,
+    pub tags: Vec<String>,
+    pub disposition: Option<&'static str>,
+}
+
+impl From<&ghosttrace_core::analysis::annotations::AnnotationRevision> for AnnotationRow {
+    fn from(row: &ghosttrace_core::analysis::annotations::AnnotationRevision) -> Self {
+        Self {
+            revision_id: row.id,
+            previous_revision: row.previous_revision,
+            author_label: row.author_label.clone(),
+            created_seconds: row.created_seconds,
+            text: row.text.clone(),
+            tags: row.tags.clone(),
+            disposition: row.disposition.map(|disposition| disposition.as_str()),
+        }
+    }
+}
+
+/// The finding dispositions an analyst can record.
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum DispositionArg {
+    Undismissed,
+    Confirmed,
+    Dismissed,
+    Commented,
+}
+
+impl DispositionArg {
+    fn to_domain(self) -> ghosttrace_core::domain::finding::Disposition {
+        use ghosttrace_core::domain::finding::Disposition;
+        match self {
+            DispositionArg::Undismissed => Disposition::Undismissed,
+            DispositionArg::Confirmed => Disposition::Confirmed,
+            DispositionArg::Dismissed => Disposition::Dismissed,
+            DispositionArg::Commented => Disposition::Commented,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -871,6 +972,7 @@ pub fn run(cli: Cli) -> u8 {
         Cli::Restore(args) => restore(args),
         Cli::Import(args) => import(args),
         Cli::Analyze(args) => analyze(args),
+        Cli::Annotate(args) => annotate(args),
         Cli::Worker(args) => worker(args),
         Cli::Tui(args) => crate::tui::run(&args.case, args.revision),
         Cli::Completions { shell } => {
@@ -947,6 +1049,127 @@ fn analyze(args: AnalyzeArgs) -> u8 {
         EXIT_PARTIAL
     } else {
         EXIT_OK
+    }
+}
+
+/// One resolved annotation target. `None` names neither target, `Some(None)`
+/// names both, which are usage errors.
+fn annotate_target(event: &Option<String>, finding: &Option<String>) -> Result<String, u8> {
+    match (event, finding) {
+        (Some(event), None) => Ok(event.clone()),
+        (None, Some(finding)) => Ok(finding.clone()),
+        (None, None) => {
+            output::emit_error(
+                "invalid_usage",
+                "name exactly one target with --event or --finding",
+            );
+            Err(EXIT_USAGE)
+        }
+        _ => {
+            output::emit_error(
+                "invalid_usage",
+                "name exactly one target: --event or --finding, not both",
+            );
+            Err(EXIT_USAGE)
+        }
+    }
+}
+
+/// Comma-separated tags: trimmed, empty entries dropped.
+fn parse_tags(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The newest recorded revision for a target, used as the default
+/// `expected_previous` so a stale append conflicts instead of overwriting.
+fn newest_revision(session: &CaseSession, target_id: &str) -> CoreResult<Option<i64>> {
+    Ok(session.annotations(target_id, 1)?.first().map(|row| row.id))
+}
+
+fn annotate(args: AnnotateArgs) -> u8 {
+    let (session, _open) = match CaseSession::open(&args.case) {
+        Ok(open) => open,
+        Err(error) => return fail(&error),
+    };
+    match args.command {
+        AnnotateCommand::History {
+            event,
+            finding,
+            limit,
+        } => {
+            let target_id = match annotate_target(&event, &finding) {
+                Ok(target_id) => target_id,
+                Err(code) => return code,
+            };
+            let revisions = match session.annotations(&target_id, limit) {
+                Ok(revisions) => revisions,
+                Err(error) => return fail_input(&error),
+            };
+            let rows: Vec<AnnotationRow> = revisions.iter().map(AnnotationRow::from).collect();
+            output::emit_json(&serde_json::json!({
+                "target_id": target_id,
+                "revisions": rows,
+            }));
+            EXIT_OK
+        }
+        AnnotateCommand::Record {
+            event,
+            finding,
+            author,
+            text,
+            tags,
+            disposition,
+        } => {
+            let target_id = match annotate_target(&event, &finding) {
+                Ok(target_id) => target_id,
+                Err(code) => return code,
+            };
+            if let Some(disposition) = disposition
+                && event.is_some()
+            {
+                output::emit_error(
+                    "invalid_usage",
+                    &format!(
+                        "a disposition applies to a finding; --event {target_id} was given \
+                         with disposition {}",
+                        disposition.to_domain().as_str()
+                    ),
+                );
+                return EXIT_USAGE;
+            }
+            let disposition = disposition.map(DispositionArg::to_domain);
+            let expected_previous = match newest_revision(&session, &target_id) {
+                Ok(revision) => revision,
+                Err(error) => return fail(&error),
+            };
+            let request = AppendAnnotation {
+                target_id: target_id.clone(),
+                author_label: author,
+                text: text.unwrap_or_default(),
+                tags: tags.as_deref().map(parse_tags).unwrap_or_default(),
+                disposition,
+                expected_previous,
+            };
+            match session.append_annotation(&request) {
+                Ok(revision) => {
+                    let row = AnnotationRow::from(&revision);
+                    output::emit_json(&serde_json::json!({
+                        "target_id": revision.target_id,
+                        "revision_id": row.revision_id,
+                        "previous_revision": row.previous_revision,
+                        "author_label": row.author_label,
+                        "disposition": row.disposition,
+                        "tags": row.tags,
+                    }));
+                    EXIT_OK
+                }
+                Err(error) => fail_input(&error),
+            }
+        }
     }
 }
 

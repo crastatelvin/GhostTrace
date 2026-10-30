@@ -1444,9 +1444,12 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
 - 10 GiB / 100,000-file capture corpus run on this host — see the P10.2
   record above for both the combined (9.72 GiB, ext4) and capture-only
   (10.0 GiB) results.
+- CLI annotation closed on `main` after the RC tag: `ghosttrace annotate
+  record/history` appends notes, tags, and dispositions and reads their
+  append-only history (see `docs/cli.md`). Saved views remain desktop-only.
 - Open: the draft prerelease is not publicly published (owner authorization),
-  Windows/macOS builds and terminal smoke checks, live NVDA/VoiceOver/Orca
-  sessions, and CLI annotations. `1.0.0` is not tagged; the candidate notes
+  Windows/macOS builds and terminal smoke checks, and live
+  NVDA/VoiceOver/Orca sessions. `1.0.0` is not tagged; the candidate notes
   record these instead of claiming support.
 
 ### P10.3 verification record

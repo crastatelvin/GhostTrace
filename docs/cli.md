@@ -524,6 +524,36 @@ parameters or no revision, `1` storage failure. The same revision and parameter
 set produce the same `run_id` and finding ids, and a stored analyst disposition
 is reported again after a re-run. There is no maliciousness score in any field.
 
+## `annotate`
+
+Records or reads an analyst annotation: a note, a tag set, or a finding
+disposition. Annotations are append-only revisions over the same targets the
+desktop reviews; they never edit a recorded observation.
+
+```bash
+ghosttrace annotate --case <DIR>.ghosttrace-case record \
+  (--event <EVENT_ID> | --finding <FINDING_ID>) \
+  --author <LABEL> [--text <NOTE>] [--tags a,b] [--disposition confirmed]
+
+ghosttrace annotate --case <DIR>.ghosttrace-case history \
+  (--event <EVENT_ID> | --finding <FINDING_ID>) [--limit 50]
+```
+
+Exactly one of `--event` or `--finding` is required; naming both (or neither)
+exits `2`. A `--disposition` applies to a finding and is rejected on an event.
+A bookmark is the recorded `bookmark` tag on an event.
+
+Output of `record`:
+`{"target_id","revision_id","previous_revision","author_label","disposition",
+"tags"}`. Output of `history`: `{"target_id","revisions":[...]}` with the newest
+revision first; each revision carries `revision_id`, `previous_revision`,
+`author_label`, `created_seconds`, `text`, `tags`, and `disposition`.
+
+Exit codes: `0` the revision was appended (or the history was read), `2`
+invalid arguments, target, or author label, `1` a rejected append — including a
+`conflict` when the newest revision moved since this append was derived, which
+is reported instead of overwriting someone else's edit.
+
 ## `tui`
 
 Browses one case interactively. The TUI reads through the same contracts as
