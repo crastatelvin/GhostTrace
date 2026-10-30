@@ -18,4 +18,5 @@ pub mod query;
 pub mod relations;
 pub mod report;
 pub mod state;
+pub mod theme;
 pub mod timeline;

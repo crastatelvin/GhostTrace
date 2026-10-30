@@ -1223,8 +1223,8 @@ impl FindingsState {
     }
 }
 
-/// Appearance choices. Restrained by design: three complete palettes, no
-/// per-widget customization and no colour-only meaning.
+/// Appearance choices. Three complete palettes; the tokens and widget chrome
+/// for each live in `crate::theme`. No meaning is carried by color alone.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ThemeChoice {
     #[default]
@@ -1245,33 +1245,6 @@ impl ThemeChoice {
             ThemeChoice::Dark => "Dark",
             ThemeChoice::Light => "Light",
             ThemeChoice::HighContrast => "High contrast",
-        }
-    }
-
-    /// High contrast is a dark base with maximum text/stroke contrast and an
-    /// opaque selection, so focus and selection never rely on hue alone.
-    pub fn visuals(self) -> egui::Visuals {
-        match self {
-            ThemeChoice::Dark => egui::Visuals::dark(),
-            ThemeChoice::Light => egui::Visuals::light(),
-            ThemeChoice::HighContrast => {
-                let mut visuals = egui::Visuals::dark();
-                visuals.override_text_color = Some(egui::Color32::WHITE);
-                visuals.panel_fill = egui::Color32::BLACK;
-                visuals.window_fill = egui::Color32::BLACK;
-                visuals.extreme_bg_color = egui::Color32::BLACK;
-                visuals.faint_bg_color = egui::Color32::from_gray(24);
-                visuals.selection.bg_fill = egui::Color32::from_rgb(0, 84, 200);
-                visuals.selection.stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-                visuals.widgets.noninteractive.bg_stroke =
-                    egui::Stroke::new(1.5, egui::Color32::from_gray(200));
-                visuals.widgets.inactive.bg_stroke =
-                    egui::Stroke::new(1.5, egui::Color32::from_gray(220));
-                visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-                visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-                visuals.widgets.active.bg_fill = egui::Color32::from_gray(70);
-                visuals
-            }
         }
     }
 }
@@ -2358,130 +2331,165 @@ impl AppState {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        if self.applied_theme != Some(self.theme) {
-            ui.ctx().set_visuals(self.theme.visuals());
-            self.applied_theme = Some(self.theme);
+        let theme = self.theme;
+        if self.applied_theme != Some(theme) {
+            let ctx = ui.ctx();
+            let base = match theme {
+                ThemeChoice::Light => egui::Theme::Light,
+                _ => egui::Theme::Dark,
+            };
+            ctx.set_theme(base);
+            ctx.set_style_of(base, crate::theme::style(theme));
+            self.applied_theme = Some(theme);
         }
-        egui::Panel::top("ghosttrace-header").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("GhostTrace");
-                ui.separator();
-                match &self.open {
-                    Some(open) => {
-                        ui.label(format!("Case: {}", open.label));
-                        ui.separator();
-                        ui.label(format!("Time zone: {}", open.timezone));
+
+        // App bar: wordmark, case identity, appearance, and the screen tabs.
+        egui::Panel::top("ghosttrace-header")
+            .frame(crate::theme::bar_frame(ui.style(), theme, 10.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    brand(ui, theme);
+                    match &self.open {
+                        Some(open) => {
+                            let palette = crate::theme::Palette::of(theme);
+                            ui.label(
+                                egui::RichText::new(format!("Case: {}", open.label))
+                                    .strong()
+                                    .color(palette.text),
+                            );
+                            crate::theme::muted(ui, theme, format!("Time zone: {}", open.timezone));
+                        }
+                        None => crate::theme::muted(ui, theme, "No case open"),
                     }
-                    None => {
-                        ui.label("No case open");
-                    }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    egui::ComboBox::from_label("Appearance")
-                        .selected_text(self.theme.label())
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let palette = crate::theme::Palette::of(theme);
+                        egui::ComboBox::from_label(
+                            egui::RichText::new("Appearance")
+                                .color(palette.text_muted)
+                                .small(),
+                        )
+                        .selected_text(theme.label())
+                        .width(130.0)
                         .show_ui(ui, |ui| {
                             for choice in ThemeChoice::ALL {
                                 ui.selectable_value(&mut self.theme, choice, choice.label());
                             }
                         });
+                    });
                 });
-            });
-            ui.horizontal(|ui| {
-                if ui
-                    .selectable_label(self.screen == Screen::Cases, "Cases")
-                    .clicked()
-                {
-                    self.screen = Screen::Cases;
-                }
-                if ui
-                    .selectable_label(self.screen == Screen::Import, "Import evidence")
-                    .clicked()
-                {
-                    if self.open.is_some() {
-                        self.screen = Screen::Import;
-                    } else {
-                        self.notice_error("open or create a case before importing evidence");
-                    }
-                }
-                if ui
-                    .selectable_label(self.screen == Screen::Timeline, "Timeline")
-                    .clicked()
-                {
-                    if self.open.is_some() {
-                        self.screen = Screen::Timeline;
-                    } else {
-                        self.notice_error("open or create a case before opening the timeline");
-                    }
-                }
-                if ui
-                    .selectable_label(self.screen == Screen::Diff, "Diff captures")
-                    .clicked()
-                {
-                    if self.open.is_some() {
-                        self.screen = Screen::Diff;
-                    } else {
-                        self.notice_error("open or create a case before comparing captures");
-                    }
-                }
-                if ui
-                    .selectable_label(self.screen == Screen::Relations, "Relationships")
-                    .clicked()
-                {
-                    if self.open.is_some() {
-                        self.screen = Screen::Relations;
-                        self.load_relations();
-                    } else {
-                        self.notice_error("open or create a case before listing relationships");
-                    }
-                }
-                if ui
-                    .selectable_label(self.screen == Screen::Findings, "Findings")
-                    .clicked()
-                {
-                    if self.open.is_some() {
-                        self.screen = Screen::Findings;
-                    } else {
-                        self.notice_error("open or create a case before reviewing findings");
-                    }
-                }
-                if ui
-                    .selectable_label(self.screen == Screen::Report, "Report and verify")
-                    .clicked()
-                {
-                    if self.open.is_some() {
-                        self.screen = Screen::Report;
-                    } else {
-                        self.notice_error("open or create a case before exporting a report");
-                    }
-                }
-            });
-        });
 
-        egui::Panel::bottom("ghosttrace-job").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let phase = self.job.phase.map(JobPhase::label).unwrap_or("no phase");
-                ui.label(format!("Job: {} ({phase})", self.job.state.label()));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(self.screen == Screen::Cases, "Cases")
+                        .clicked()
+                    {
+                        self.screen = Screen::Cases;
+                    }
+                    if ui
+                        .selectable_label(self.screen == Screen::Import, "Import evidence")
+                        .clicked()
+                    {
+                        if self.open.is_some() {
+                            self.screen = Screen::Import;
+                        } else {
+                            self.notice_error("open or create a case before importing evidence");
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.screen == Screen::Timeline, "Timeline")
+                        .clicked()
+                    {
+                        if self.open.is_some() {
+                            self.screen = Screen::Timeline;
+                        } else {
+                            self.notice_error("open or create a case before opening the timeline");
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.screen == Screen::Diff, "Diff captures")
+                        .clicked()
+                    {
+                        if self.open.is_some() {
+                            self.screen = Screen::Diff;
+                        } else {
+                            self.notice_error("open or create a case before comparing captures");
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.screen == Screen::Relations, "Relationships")
+                        .clicked()
+                    {
+                        if self.open.is_some() {
+                            self.screen = Screen::Relations;
+                            self.load_relations();
+                        } else {
+                            self.notice_error("open or create a case before listing relationships");
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.screen == Screen::Findings, "Findings")
+                        .clicked()
+                    {
+                        if self.open.is_some() {
+                            self.screen = Screen::Findings;
+                        } else {
+                            self.notice_error("open or create a case before reviewing findings");
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.screen == Screen::Report, "Report and verify")
+                        .clicked()
+                    {
+                        if self.open.is_some() {
+                            self.screen = Screen::Report;
+                        } else {
+                            self.notice_error("open or create a case before exporting a report");
+                        }
+                    }
+                });
                 ui.separator();
-                ui.label(&self.job.message);
-                if self.is_running() && ui.button("Cancel").clicked() {
-                    self.request_cancel();
+            });
+
+        // Status bar: the job state as a worded chip, then progress.
+        egui::Panel::bottom("ghosttrace-job")
+            .frame(crate::theme::bar_frame(ui.style(), theme, 8.0))
+            .show(ui, |ui| {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let (tone, label) = match self.job.state {
+                        JobState::Running => (crate::theme::Tone::Accent, "running"),
+                        JobState::Finished => (crate::theme::Tone::Ok, "finished"),
+                        JobState::Failed => (crate::theme::Tone::Error, "failed"),
+                        JobState::Idle => (crate::theme::Tone::Neutral, "idle"),
+                    };
+                    crate::theme::chip(ui, theme, label, tone);
+                    let phase = self.job.phase.map(JobPhase::label).unwrap_or("no phase");
+                    crate::theme::muted(ui, theme, format!("{phase} · {}", self.job.message));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.is_running() && crate::theme::quiet(ui, theme, "Cancel").clicked() {
+                            self.request_cancel();
+                        }
+                    });
+                });
+                if let Some(progress) = self.job.progress {
+                    ui.add(egui::ProgressBar::new(progress).show_percentage());
+                } else if self.is_running() {
+                    ui.add(egui::ProgressBar::new(0.0).animate(true));
                 }
             });
-            if let Some(progress) = self.job.progress {
-                ui.add(egui::ProgressBar::new(progress).show_percentage());
-            } else if self.is_running() {
-                ui.add(egui::ProgressBar::new(0.0).animate(true));
-            }
-        });
 
         egui::CentralPanel::default().show(ui, |ui| {
             if !self.notices.is_empty() {
                 for notice in &self.notices {
-                    let prefix = match notice.level {
-                        NoticeLevel::Info => "Info",
-                        NoticeLevel::Error => "Error",
-                    };
-                    ui.label(format!("{prefix}: {}", notice.text));
+                    ui.horizontal_wrapped(|ui| {
+                        let (tone, word) = match notice.level {
+                            NoticeLevel::Info => (crate::theme::Tone::Neutral, "Info"),
+                            NoticeLevel::Error => (crate::theme::Tone::Error, "Error"),
+                        };
+                        crate::theme::chip(ui, theme, word, tone);
+                        crate::theme::muted(ui, theme, notice.text.clone());
+                    });
                 }
                 ui.separator();
             }
@@ -2496,6 +2504,20 @@ impl AppState {
             }
         });
     }
+}
+
+/// The app mark: an accent square beside the wordmark.
+fn brand(ui: &mut egui::Ui, theme: ThemeChoice) {
+    let palette = crate::theme::Palette::of(theme);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(4), palette.accent_fill);
+    ui.label(
+        egui::RichText::new("GhostTrace")
+            .heading()
+            .strong()
+            .color(palette.text),
+    );
 }
 
 /// A labeled text field: the label is the control's accessible name, so tests

@@ -17,60 +17,78 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     };
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.heading("Evidence");
-        ui.label(format!("Case: {} · {}", open.label, open.directory));
+        let theme = state.theme;
+        crate::theme::title(ui, theme, "Evidence");
+        crate::theme::muted(ui, theme, format!("Case: {} · {}", open.label, open.directory));
+        ui.add_space(crate::theme::SECTION_GAP);
 
-        ui.group(|ui| {
-            ui.label("Capture a source directory");
+        crate::theme::card(ui, theme, |ui| {
+            crate::theme::section(ui, theme, "Capture a source directory");
             labeled_text(ui, "Source directory", &mut state.import_form.source);
             labeled_text(ui, "Acquisition label", &mut state.import_form.label);
             ui.label("Method");
-            ui.radio_value(
-                &mut state.import_form.method,
-                AcquisitionMethod::ProtectedCopy,
-                "Protected copy",
-            );
-            ui.radio_value(
-                &mut state.import_form.method,
-                AcquisitionMethod::LiveBestEffort,
-                "Live best effort",
-            );
+            ui.horizontal_wrapped(|ui| {
+                ui.radio_value(
+                    &mut state.import_form.method,
+                    AcquisitionMethod::ProtectedCopy,
+                    "Protected copy",
+                );
+                ui.radio_value(
+                    &mut state.import_form.method,
+                    AcquisitionMethod::LiveBestEffort,
+                    "Live best effort",
+                );
+            });
             match state.import_form.method {
-                AcquisitionMethod::ProtectedCopy => ui.label(
+                AcquisitionMethod::ProtectedCopy => crate::theme::muted(
+                    ui,
+                    theme,
                     "Protected copy is recommended: verify the copy was made by a write-blocked \
                      or equivalent process before relying on it in production.",
                 ),
-                AcquisitionMethod::LiveBestEffort => ui.label(
+                AcquisitionMethod::LiveBestEffort => crate::theme::muted(
+                    ui,
+                    theme,
                     "Live best effort can miss changes or files that vanish mid-copy; coverage \
                      records what was seen, and access-time metadata may be affected.",
                 ),
             };
-            ui.label(format!(
-                "Limits: depth {DEFAULT_MAX_DEPTH}, {DEFAULT_MAX_ENTRIES} entries, {} MiB per file. \
-                 Roots overlapping the case store are rejected before anything is read.",
-                DEFAULT_MAX_FILE_BYTES / (1024 * 1024)
-            ));
+            crate::theme::muted(
+                ui,
+                theme,
+                format!(
+                    "Limits: depth {DEFAULT_MAX_DEPTH}, {DEFAULT_MAX_ENTRIES} entries, {} MiB per file. \
+                     Roots overlapping the case store are rejected before anything is read.",
+                    DEFAULT_MAX_FILE_BYTES / (1024 * 1024)
+                ),
+            );
             let source = state.import_form.source.trim();
-            ui.label(format!(
-                "Summary: capture {} as {} ({}).",
-                if source.is_empty() { "<source>" } else { source },
-                if state.import_form.label.trim().is_empty() {
-                    "<source path>"
-                } else {
-                    state.import_form.label.trim()
-                },
-                method_label(state.import_form.method),
-            ));
+            crate::theme::muted(
+                ui,
+                theme,
+                format!(
+                    "Summary: capture {} as {} ({}).",
+                    if source.is_empty() { "<source>" } else { source },
+                    if state.import_form.label.trim().is_empty() {
+                        "<source path>"
+                    } else {
+                        state.import_form.label.trim()
+                    },
+                    method_label(state.import_form.method),
+                ),
+            );
             let enabled = !state.is_running();
             ui.add_enabled_ui(enabled, |ui| {
-                if ui.button("Start capture").clicked() {
+                if crate::theme::primary(ui, theme, "Start capture").clicked() {
                     start_capture(state);
                 }
             });
         });
 
-        ui.group(|ui| {
-            ui.label("Import a captured object");
+        ui.add_space(crate::theme::SECTION_GAP);
+
+        crate::theme::card(ui, theme, |ui| {
+            crate::theme::section(ui, theme, "Import a captured object");
             labeled_text(
                 ui,
                 "Captured object path",
@@ -79,11 +97,7 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
             ui.label("Format");
             ui.horizontal_wrapped(|ui| {
                 for choice in FormatChoice::ALL {
-                    ui.radio_value(
-                        &mut state.import_form.format,
-                        choice,
-                        choice.label(),
-                    );
+                    ui.radio_value(&mut state.import_form.format, choice, choice.label());
                 }
             });
             labeled_text(
@@ -92,29 +106,44 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
                 &mut state.import_form.syslog_timezone,
             );
             labeled_text(ui, "Syslog year", &mut state.import_form.syslog_year);
-            ui.label(
+            crate::theme::muted(
+                ui,
+                theme,
                 "Time zone and year apply only to RFC 3164 syslog. Neither is inferred from the \
                  file: leave them empty to keep those times unresolved.",
             );
             let enabled = !state.is_running();
             ui.add_enabled_ui(enabled, |ui| {
-                if ui.button("Start import").clicked() {
+                if crate::theme::primary(ui, theme, "Start import").clicked() {
                     start_import(state);
                 }
             });
         });
 
-        ui.separator();
-        ui.label("Recorded captures");
-        if open.acquisitions.is_empty() {
-            ui.label("none yet");
-        }
-        for acquisition in open.acquisitions.iter().take(20) {
-            ui.label(format!(
-                "capture {} · {}",
-                acquisition.acquisition_id, acquisition.state
-            ));
-        }
+        ui.add_space(crate::theme::SECTION_GAP);
+
+        crate::theme::card(ui, theme, |ui| {
+            crate::theme::section(ui, theme, "Recorded captures");
+            if open.acquisitions.is_empty() {
+                crate::theme::muted(ui, theme, "none yet");
+            }
+            for acquisition in open.acquisitions.iter().take(20) {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("capture {}", acquisition.acquisition_id))
+                            .monospace()
+                            .small()
+                            .color(crate::theme::Palette::of(theme).text_muted),
+                    );
+                    crate::theme::chip(
+                        ui,
+                        theme,
+                        &acquisition.state,
+                        crate::cases::state_tone(&acquisition.state),
+                    );
+                });
+            }
+        });
     });
 }
 

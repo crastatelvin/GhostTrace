@@ -143,18 +143,29 @@ the job line.
   and coverage gaps; a mismatch fails the job with its code instead of a
   success-shaped result.
 
-**Appearance**
+**Appearance and layout**
 
 - Dark (default), Light, and High contrast palettes, chosen in the header. High
   contrast uses a black background, white text, opaque selection, and thicker
   widget strokes so focus and selection never depend on hue alone. The choice
   is per session; no configuration file is written.
+- The shell is an app bar (wordmark, case identity, appearance, screen tabs)
+  over a status bar (job state as a worded chip plus progress), with each
+  screen's content in raised cards: quiet section labels, metric tiles for
+  counts, and state chips that always carry their own words. The palette
+  tokens, metrics, and widget chrome live in `theme.rs` and are applied as one
+  egui style per palette, so every screen shares them.
 - Every screen has an explicit empty state (no case, no capture, no parse run,
   no findings, no relationships), a loading state on the job/query bar, and a
   failure state that keeps the error code and message visible.
 
 ## Architecture
 
+- `theme.rs` — the palette tokens, metrics scale, and the egui `Style` each
+  palette installs, plus the shared `card`/`section`/`chip`/`stat`/`primary`/
+  `quiet` helpers. Widget chrome (buttons, fields, check boxes, combo boxes,
+  scroll bars, selection) is styled once per palette; no meaning is ever
+  carried by color without an accompanying word.
 - `state.rs` — pure UI state and the command/result reducer. `apply()` drops
   results whose job id is no longer current.
 - `commands.rs` — `Command`/`CommandEvent` messages and the single worker

@@ -18,9 +18,12 @@ use crate::state::{AppState, TimelineFilters, labeled_text};
 const ROW_HEIGHT: f32 = 22.0;
 
 pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     let Some(revision) = state.timeline.revision.clone() else {
-        ui.heading("Timeline");
-        ui.label(
+        crate::theme::title(ui, theme, "Timeline");
+        crate::theme::muted(
+            ui,
+            theme,
             "This case has no parse run yet. Import a captured object or scan a case \
              to create a revision, then return here.",
         );
@@ -31,28 +34,37 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     egui::Panel::right("ghosttrace-inspector")
         .resizable(true)
         .default_size(430.0)
+        .frame(crate::theme::side_frame(ui.style(), theme))
         .show(ui, |ui| crate::evidence::ui(state, ui));
 
-    ui.heading("Timeline");
-    ui.label(format!(
-        "Revision {revision} · times shown in {} · {} event(s) matching",
-        state.timeline.display_timezone,
-        state
-            .timeline
-            .histogram
-            .as_ref()
-            .map_or(0, |histogram| histogram.total)
-    ));
+    crate::theme::title(ui, theme, "Timeline");
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "Revision {revision} · times shown in {} · {} event(s) matching",
+            state.timeline.display_timezone,
+            state
+                .timeline
+                .histogram
+                .as_ref()
+                .map_or(0, |histogram| histogram.total)
+        ),
+    );
 
-    filters(state, ui);
-    views(state, ui);
+    crate::theme::card(ui, theme, |ui| {
+        crate::theme::section(ui, theme, "Filters");
+        filters(state, ui);
+        views(state, ui);
+    });
     histogram(state, ui);
-    ui.separator();
+    crate::theme::section(ui, theme, "Events");
     event_list(state, ui);
     shortcuts(state, ui);
 }
 
 fn filters(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     let now = ui.input(|input| input.time);
     let mut text_changed = false;
     ui.horizontal_wrapped(|ui| {
@@ -74,7 +86,7 @@ fn filters(state: &mut AppState, ui: &mut egui::Ui) {
         {
             state.refresh_timeline();
         }
-        if ui.button("Reset filters").clicked() {
+        if crate::theme::quiet(ui, theme, "Reset filters").clicked() {
             state.timeline.filters = TimelineFilters::default();
             state.refresh_timeline();
         }
@@ -87,21 +99,22 @@ fn filters(state: &mut AppState, ui: &mut egui::Ui) {
 /// Saved views are typed filters over the same query contract. Applying one
 /// only changes the visible filters; it never runs stored SQL.
 fn views(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     egui::CollapsingHeader::new(format!("Saved views · {}", state.timeline.view_status))
         .default_open(false)
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 labeled_text(ui, "Saved view name", &mut state.timeline.view_name);
-                if ui.button("Save current filters").clicked() {
+                if crate::theme::quiet(ui, theme, "Save current filters").clicked() {
                     state.save_current_view();
                 }
-                if ui.button("Reload saved views").clicked() {
+                if crate::theme::quiet(ui, theme, "Reload saved views").clicked() {
                     state.reload_views();
                 }
             });
             for view in state.timeline.views.clone() {
                 let label = format!("Apply {} · {}", view.name, describe_filter(&view.filter));
-                if ui.button(label).clicked() {
+                if crate::theme::quiet(ui, theme, &label).clicked() {
                     state.apply_view(&view.name);
                 }
             }
@@ -136,55 +149,64 @@ fn describe_filter(filter: &SavedFilter) -> String {
 }
 
 fn histogram(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     let Some(histogram) = state.timeline.histogram.clone() else {
         return;
     };
     let zone = state.timeline.display_timezone.clone();
     let mut select = None;
     let mut clear = false;
-    egui::CollapsingHeader::new(format!(
-        "Time histogram · {} bin(s) of {} · {} matching event(s)",
-        histogram.bins.len(),
-        bin_width_label(histogram.bin_seconds),
-        histogram.total
-    ))
-    .default_open(true)
-    .show(ui, |ui| {
-        if histogram.unresolved_count > 0 {
-            ui.label(format!(
-                "{} matching event(s) have no chosen time; they cannot be placed in a \
+    ui.add_space(crate::theme::SECTION_GAP);
+    crate::theme::card(ui, theme, |ui| {
+        egui::CollapsingHeader::new(format!(
+            "Time histogram · {} bin(s) of {} · {} matching event(s)",
+            histogram.bins.len(),
+            bin_width_label(histogram.bin_seconds),
+            histogram.total
+        ))
+        .default_open(true)
+        .show(ui, |ui| {
+            if histogram.unresolved_count > 0 {
+                crate::theme::muted(
+                    ui,
+                    theme,
+                    format!(
+                        "{} matching event(s) have no chosen time; they cannot be placed in a \
                      window and are reported here instead of being dropped.",
-                histogram.unresolved_count
-            ));
-        }
-        if histogram.bins.is_empty() {
-            ui.label("No binned events in this view.");
-            return;
-        }
-        if (state.timeline.filters.after_seconds.is_some()
-            || state.timeline.filters.before_seconds.is_some())
-            && ui.button("Clear time window").clicked()
-        {
-            clear = true;
-        }
-        egui::ScrollArea::vertical()
-            .max_height(160.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                for bin in &histogram.bins {
-                    let selected = state.timeline.filters.after_seconds == Some(bin.start_seconds)
-                        && state.timeline.filters.before_seconds == Some(bin.end_seconds);
-                    let label = format!(
-                        "{} to {} · {} event(s)",
-                        format_instant(bin.start_seconds, &zone),
-                        format_instant(bin.end_seconds, &zone),
-                        bin.count
-                    );
-                    if ui.selectable_label(selected, label).clicked() {
-                        select = Some((bin.start_seconds, bin.end_seconds));
+                        histogram.unresolved_count
+                    ),
+                );
+            }
+            if histogram.bins.is_empty() {
+                crate::theme::muted(ui, theme, "No binned events in this view.");
+                return;
+            }
+            if (state.timeline.filters.after_seconds.is_some()
+                || state.timeline.filters.before_seconds.is_some())
+                && crate::theme::quiet(ui, theme, "Clear time window").clicked()
+            {
+                clear = true;
+            }
+            egui::ScrollArea::vertical()
+                .max_height(160.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for bin in &histogram.bins {
+                        let selected = state.timeline.filters.after_seconds
+                            == Some(bin.start_seconds)
+                            && state.timeline.filters.before_seconds == Some(bin.end_seconds);
+                        let label = format!(
+                            "{} to {} · {} event(s)",
+                            format_instant(bin.start_seconds, &zone),
+                            format_instant(bin.end_seconds, &zone),
+                            bin.count
+                        );
+                        if ui.selectable_label(selected, label).clicked() {
+                            select = Some((bin.start_seconds, bin.end_seconds));
+                        }
                     }
-                }
-            });
+                });
+        });
     });
     if clear {
         state.timeline.filters.after_seconds = None;
@@ -197,6 +219,7 @@ fn histogram(state: &mut AppState, ui: &mut egui::Ui) {
 }
 
 fn event_list(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     let rows = state.timeline.events.clone();
     let zone = state.timeline.display_timezone.clone();
     let selected = state.timeline.selected.clone();
@@ -223,10 +246,11 @@ fn event_list(state: &mut AppState, ui: &mut egui::Ui) {
     if near_end {
         state.load_more_timeline();
     }
-    ui.label(&state.timeline.status);
+    crate::theme::muted(ui, theme, state.timeline.status.clone());
 }
 
 fn shortcuts(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     if !ui.ctx().egui_wants_keyboard_input() {
         if ui.input(|input| input.key_pressed(egui::Key::J)) {
             state.move_selection(1);
@@ -243,7 +267,11 @@ fn shortcuts(state: &mut AppState, ui: &mut egui::Ui) {
             ui.memory_mut(|memory| memory.request_focus(id));
         }
     }
-    ui.label("Keys: J/K next/previous event · U unresolved view · / search");
+    crate::theme::muted(
+        ui,
+        theme,
+        "Keys: J/K next/previous event · U unresolved view · / search",
+    );
 }
 
 /// One row, with every uncertainty stated in words rather than color.

@@ -10,48 +10,62 @@ use eframe::egui;
 use ghosttrace_core::domain::finding::{Disposition, Finding};
 use ghosttrace_core::text::escape_for_display;
 
-use crate::state::{AppState, labeled_text};
+use crate::state::{AppState, ThemeChoice, labeled_text};
 
 pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
-    ui.heading("Findings");
-    ui.label(
+    let theme = state.theme;
+    crate::theme::title(ui, theme, "Findings");
+    crate::theme::muted(
+        ui,
+        theme,
         "Rule results are hypotheses with recorded predicates and named alternatives. They are \
          not a probability and not a verdict.",
     );
 
     if state.findings.revision.is_none() {
-        ui.label("This case has no parse run yet. Import a captured object first.");
+        crate::theme::muted(
+            ui,
+            theme,
+            "This case has no parse run yet. Import a captured object first.",
+        );
         return;
     }
 
     ui.horizontal_wrapped(|ui| {
-        if ui.button("Run analysis").clicked() {
+        if crate::theme::primary(ui, theme, "Run analysis").clicked() {
             state.run_analysis();
         }
-        ui.label(&state.findings.status);
+        crate::theme::muted(ui, theme, state.findings.status.clone());
     });
 
     egui::Panel::right("ghosttrace-findings-detail")
         .resizable(true)
         .default_size(440.0)
+        .frame(crate::theme::side_frame(ui.style(), theme))
         .show(ui, |ui| detail(state, ui));
 
     list(state, ui);
     handle_keys(state, ui);
-    ui.label("Keys: J/K next/previous finding");
+    crate::theme::muted(ui, theme, "Keys: J/K next/previous finding");
 }
 
 fn list(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     let findings = state.findings.findings.clone();
     let selected = state.findings.selected.clone();
     let mut clicked = None;
     if findings.is_empty() {
-        ui.label("No findings recorded by the current analysis run.");
+        crate::theme::muted(
+            ui,
+            theme,
+            "No findings recorded by the current analysis run.",
+        );
         return;
     }
+    crate::theme::section(ui, theme, "Findings");
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, 20.0, findings.len(), |ui, range| {
+        .show_rows(ui, 24.0, findings.len(), |ui, range| {
             for index in range.clone() {
                 let finding = &findings[index];
                 let (rationale, _) = escape_for_display(&finding.rationale, 120);
@@ -76,16 +90,18 @@ fn list(state: &mut AppState, ui: &mut egui::Ui) {
 }
 
 fn detail(state: &mut AppState, ui: &mut egui::Ui) {
-    ui.heading("Finding detail");
+    let theme = state.theme;
+    crate::theme::title(ui, theme, "Finding detail");
     let Some(finding) = state.findings.selected_finding().cloned() else {
-        ui.label("Select a finding to see why it was recorded.");
+        crate::theme::muted(ui, theme, "Select a finding to see why it was recorded.");
         return;
     };
-    let clicked_event = explanation(ui, &finding);
+    let clicked_event = explanation(ui, theme, &finding);
 
-    ui.separator();
-    ui.heading("Disposition");
-    ui.label(
+    crate::theme::section(ui, theme, "Disposition");
+    crate::theme::muted(
+        ui,
+        theme,
         "Each change appends a revision that names the one it supersedes. A concurrent edit is \
          reported as a conflict instead of overwriting it.",
     );
@@ -110,7 +126,7 @@ fn detail(state: &mut AppState, ui: &mut egui::Ui) {
     )
     .labelled_by(note_label.id);
     labeled_text(ui, "Disposition tags", &mut state.findings.tags);
-    if ui.button("Record disposition").clicked() {
+    if crate::theme::quiet(ui, theme, "Record disposition").clicked() {
         state.record_finding_annotation();
     }
 
@@ -118,10 +134,13 @@ fn detail(state: &mut AppState, ui: &mut egui::Ui) {
         state.open_event(&event_id);
     }
 
-    ui.separator();
-    ui.heading("Recorded history");
+    crate::theme::section(ui, theme, "Recorded history");
     if state.findings.history.is_empty() {
-        ui.label("No note or disposition has been recorded for this finding yet.");
+        crate::theme::muted(
+            ui,
+            theme,
+            "No note or disposition has been recorded for this finding yet.",
+        );
     }
     for revision in &state.findings.history {
         let (text, _) = escape_for_display(&revision.text, 2_048);
@@ -129,42 +148,50 @@ fn detail(state: &mut AppState, ui: &mut egui::Ui) {
             .disposition
             .map(|disposition| disposition.as_str())
             .unwrap_or("no disposition change");
-        ui.label(format!(
-            "{} · {} · {disposition} · {} · tags: {}",
-            crate::timeline::format_instant(
-                revision.created_seconds,
-                &state.timeline.display_timezone
+        crate::theme::muted(
+            ui,
+            theme,
+            format!(
+                "{} · {} · {disposition} · {} · tags: {}",
+                crate::timeline::format_instant(
+                    revision.created_seconds,
+                    &state.timeline.display_timezone
+                ),
+                revision.author_label,
+                if text.is_empty() {
+                    "no text".into()
+                } else {
+                    text
+                },
+                if revision.tags.is_empty() {
+                    "none".into()
+                } else {
+                    revision.tags.join(", ")
+                }
             ),
-            revision.author_label,
-            if text.is_empty() {
-                "no text".into()
-            } else {
-                text
-            },
-            if revision.tags.is_empty() {
-                "none".into()
-            } else {
-                revision.tags.join(", ")
-            }
-        ));
+        );
     }
 }
 
-fn explanation(ui: &mut egui::Ui, finding: &Finding) -> Option<String> {
-    ui.label(format!(
-        "Rule {} · version {} · severity {}",
-        finding.rule_id,
-        finding.rule_version,
-        finding.severity.as_str()
-    ));
+fn explanation(ui: &mut egui::Ui, theme: ThemeChoice, finding: &Finding) -> Option<String> {
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "Rule {} · version {} · severity {}",
+            finding.rule_id,
+            finding.rule_version,
+            finding.severity.as_str()
+        ),
+    );
     let (rationale, _) = escape_for_display(&finding.rationale, 4_096);
-    ui.label(format!("Why: {rationale}"));
+    crate::theme::muted(ui, theme, format!("Why: {rationale}"));
     if finding.alternatives.is_empty() {
-        ui.label("Alternatives: none recorded.");
+        crate::theme::muted(ui, theme, "Alternatives: none recorded.");
     } else {
         for alternative in &finding.alternatives {
             let (alternative, _) = escape_for_display(alternative, 1_024);
-            ui.label(format!("Alternative: {alternative}"));
+            crate::theme::muted(ui, theme, format!("Alternative: {alternative}"));
         }
     }
     let predicates = serde_json::to_string_pretty(&finding.predicates)
@@ -179,19 +206,22 @@ fn explanation(ui: &mut egui::Ui, finding: &Finding) -> Option<String> {
             .desired_width(f32::INFINITY),
     );
     if truncated {
-        ui.label("Predicate preview truncated.");
+        crate::theme::muted(ui, theme, "Predicate preview truncated.");
     }
-    ui.label(format!(
-        "{} recorded event(s) support this finding.",
-        finding.event_ids.len()
-    ));
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "{} recorded event(s) support this finding.",
+            finding.event_ids.len()
+        ),
+    );
     let mut clicked = None;
     egui::ScrollArea::vertical()
         .max_height(160.0)
         .show(ui, |ui| {
             for event_id in &finding.event_ids {
-                if ui
-                    .button(format!("Open event {}", short(event_id)))
+                if crate::theme::quiet(ui, theme, &format!("Open event {}", short(event_id)))
                     .clicked()
                 {
                     clicked = Some(event_id.clone());

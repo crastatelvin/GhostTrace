@@ -11,8 +11,11 @@ use ghosttrace_core::text::escape_for_display;
 use crate::state::{AppState, GRAPH_MAX_EDGES, GRAPH_MAX_NODES, support_events, support_fields};
 
 pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
-    ui.heading("Relationships");
-    ui.label(
+    let theme = state.theme;
+    crate::theme::title(ui, theme, "Relationships");
+    crate::theme::muted(
+        ui,
+        theme,
         "Candidate links derived from recorded entities. A link is a hypothesis with recorded \
          support; equal values do not prove an action.",
     );
@@ -20,29 +23,29 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         crate::state::labeled_text(ui, "Filter by entity id", &mut state.relations.entity);
         crate::state::labeled_text(ui, "Filter by relationship kind", &mut state.relations.kind);
-        if ui.button("Apply filters").clicked() {
+        if crate::theme::quiet(ui, theme, "Apply filters").clicked() {
             state.load_relations();
         }
-        if ui.button("Derive relationships").clicked() {
+        if crate::theme::quiet(ui, theme, "Derive relationships").clicked() {
             state.derive_relationships();
         }
     });
 
     if state.relations.revision.is_none() {
-        ui.label("This case has no parse run yet.");
+        crate::theme::muted(ui, theme, "This case has no parse run yet.");
         return;
     }
 
     egui::Panel::right("ghosttrace-relations-detail")
         .resizable(true)
         .default_size(380.0)
+        .frame(crate::theme::side_frame(ui.style(), theme))
         .show(ui, |ui| detail(state, ui));
 
     graph(state, ui);
-    ui.separator();
     list(state, ui);
     handle_keys(state, ui);
-    ui.label("Keys: J/K next/previous relationship");
+    crate::theme::muted(ui, theme, "Keys: J/K next/previous relationship");
 }
 
 /// Draw the bounded graph. Node positions are a fixed circle, so the layout
@@ -53,6 +56,7 @@ fn graph(state: &mut AppState, ui: &mut egui::Ui) {
         ui.label("No relationships loaded. Derive them, or relax the filters.");
         return;
     }
+    let palette = crate::theme::Palette::of(state.theme);
     let height = (ui.available_height() * 0.4).clamp(120.0, 280.0);
     let size = egui::vec2(ui.available_width().min(460.0), height);
     let (response, painter) = ui.allocate_painter(size, egui::Sense::hover());
@@ -75,9 +79,9 @@ fn graph(state: &mut AppState, ui: &mut egui::Ui) {
         painter.line_segment(
             [from, to],
             if selected {
-                egui::Stroke::new(3.0, egui::Color32::WHITE)
+                egui::Stroke::new(3.0, palette.accent)
             } else {
-                egui::Stroke::new(1.0, egui::Color32::GRAY)
+                egui::Stroke::new(1.0, palette.border_strong)
             },
         );
         let midpoint = from + (to - from) * 0.5;
@@ -102,45 +106,50 @@ fn graph(state: &mut AppState, ui: &mut egui::Ui) {
             midpoint,
             3.0,
             if selected {
-                egui::Color32::WHITE
+                palette.accent
             } else {
-                egui::Color32::GRAY
+                palette.border_strong
             },
         );
     }
     for (index, node) in model.nodes.iter().enumerate() {
         let position = position(index);
-        painter.circle_filled(position, 5.0, egui::Color32::LIGHT_BLUE);
+        painter.circle_filled(position, 5.0, palette.accent);
         let (label, _) = escape_for_display(&node.label, 20);
         painter.text(
             position + egui::vec2(8.0, -8.0),
             egui::Align2::LEFT_BOTTOM,
             label,
             egui::FontId::proportional(11.0),
-            egui::Color32::LIGHT_GRAY,
+            palette.text_muted,
         );
     }
     if let Some(id) = clicked {
         state.relations.select(id);
     }
     if model.capped_nodes || model.capped_edges {
-        ui.label(format!(
-            "Graph is bounded to {GRAPH_MAX_NODES} node(s) and {GRAPH_MAX_EDGES} edge(s); it \
-             draws {} node(s) and {} edge(s). The list below has every loaded row, so nothing is \
-             reachable only through the drawing.",
-            model.nodes.len(),
-            model.edges.len()
-        ));
+        crate::theme::muted(
+            ui,
+            state.theme,
+            format!(
+                "Graph is bounded to {GRAPH_MAX_NODES} node(s) and {GRAPH_MAX_EDGES} edge(s); it \
+                 draws {} node(s) and {} edge(s). The list below has every loaded row, so nothing \
+                 is reachable only through the drawing.",
+                model.nodes.len(),
+                model.edges.len()
+            ),
+        );
     }
 }
 
 fn list(state: &mut AppState, ui: &mut egui::Ui) {
+    let theme = state.theme;
     let rows = state.relations.rows.clone();
     let selected = state.relations.selected;
     let mut clicked = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, 20.0, rows.len(), |ui, range| {
+        .show_rows(ui, 24.0, rows.len(), |ui, range| {
             for index in range.clone() {
                 let row = &rows[index];
                 let label = format!(
@@ -162,59 +171,91 @@ fn list(state: &mut AppState, ui: &mut egui::Ui) {
     if let Some(id) = clicked {
         state.relations.select(id);
     }
+    crate::theme::section(ui, theme, "Relationships");
     ui.horizontal(|ui| {
-        ui.label(&state.relations.status);
-        if state.relations.next_cursor.is_some() && ui.button("Load more").clicked() {
+        crate::theme::muted(ui, theme, state.relations.status.clone());
+        if state.relations.next_cursor.is_some()
+            && crate::theme::quiet(ui, theme, "Load more").clicked()
+        {
             state.load_more_relations();
         }
     });
 }
 
 fn detail(state: &mut AppState, ui: &mut egui::Ui) {
-    ui.heading("Relationship detail");
+    let theme = state.theme;
+    crate::theme::title(ui, theme, "Relationship detail");
     let Some(row) = state.relations.selected_row().cloned() else {
-        ui.label("Select a relationship to see its recorded support.");
+        crate::theme::muted(
+            ui,
+            theme,
+            "Select a relationship to see its recorded support.",
+        );
         return;
     };
-    ui.label(format!(
-        "Kind: {} · rule {} · version {}",
-        row.kind, row.rule_id, row.rule_version
-    ));
-    ui.label(format!("Strength basis: {}", row.strength_basis));
-    ui.label(format!(
-        "Source: {} ({})",
-        short(&row.source.display_form),
-        row.source.kind
-    ));
-    ui.label(format!(
-        "Target: {} ({})",
-        short(&row.target.display_form),
-        row.target.kind
-    ));
+    crate::theme::section(ui, theme, "Recorded link");
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "Kind: {} · rule {} · version {}",
+            row.kind, row.rule_id, row.rule_version
+        ),
+    );
+    crate::theme::muted(ui, theme, format!("Strength basis: {}", row.strength_basis));
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "Source: {} ({})",
+            short(&row.source.display_form),
+            row.source.kind
+        ),
+    );
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "Target: {} ({})",
+            short(&row.target.display_form),
+            row.target.kind
+        ),
+    );
     let fields = support_fields(&row.support_json);
     if fields.is_empty() {
-        ui.label("Matching fields: none recorded in the stored support value.");
+        crate::theme::muted(
+            ui,
+            theme,
+            "Matching fields: none recorded in the stored support value.",
+        );
     } else {
-        ui.label(format!(
-            "Matching fields: {}",
-            fields
-                .iter()
-                .map(|field| escape_for_display(field, 240).0)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+        crate::theme::muted(
+            ui,
+            theme,
+            format!(
+                "Matching fields: {}",
+                fields
+                    .iter()
+                    .map(|field| escape_for_display(field, 240).0)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
     }
     let events = support_events(&row.support_json);
-    ui.label(format!(
-        "{} supporting event(s). Opening one shows its raw record and locator.",
-        events.len()
-    ));
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "{} supporting event(s). Opening one shows its raw record and locator.",
+            events.len()
+        ),
+    );
     egui::ScrollArea::vertical()
         .max_height(320.0)
         .show(ui, |ui| {
             for event_id in &events {
-                if ui
-                    .button(format!("Open event {}", short(event_id)))
+                if crate::theme::quiet(ui, theme, &format!("Open event {}", short(event_id)))
                     .clicked()
                 {
                     state.open_event(event_id);

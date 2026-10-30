@@ -11,8 +11,11 @@ use ghosttrace_core::text::escape_for_display;
 use crate::state::{AcquisitionSummary, AppState};
 
 pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
-    ui.heading("Compare captures");
-    ui.label(
+    let theme = state.theme;
+    crate::theme::title(ui, theme, "Compare captures");
+    crate::theme::muted(
+        ui,
+        theme,
         "Compares two recorded captures of the same case. Equal bytes are never reported as a \
          copy or move action; scope and coverage limits are stated with the result.",
     );
@@ -23,33 +26,37 @@ pub fn ui(state: &mut AppState, ui: &mut egui::Ui) {
         .map(|open| open.acquisitions.clone())
         .unwrap_or_default();
     if acquisitions.len() < 2 {
-        ui.label(format!(
-            "{} recorded capture(s). Two are required for a comparison.",
-            acquisitions.len()
-        ));
+        crate::theme::muted(
+            ui,
+            theme,
+            format!(
+                "{} recorded capture(s). Two are required for a comparison.",
+                acquisitions.len()
+            ),
+        );
         return;
     }
 
     egui::Panel::right("ghosttrace-diff-detail")
         .resizable(true)
         .default_size(360.0)
+        .frame(crate::theme::side_frame(ui.style(), theme))
         .show(ui, |ui| row_detail(state, ui));
 
     ui.horizontal_wrapped(|ui| {
         picker(ui, "Earlier capture", &mut state.diff.before, &acquisitions);
         picker(ui, "Later capture", &mut state.diff.after, &acquisitions);
-        if ui.button("Compare").clicked() {
+        if crate::theme::quiet(ui, state.theme, "Compare").clicked() {
             state.open_diff();
         }
     });
 
     let Some(report) = state.diff.report.clone() else {
-        ui.label(&state.diff.status);
+        crate::theme::muted(ui, theme, state.diff.status.clone());
         return;
     };
 
-    summary(ui, &report);
-    ui.separator();
+    crate::theme::card(ui, theme, |ui| summary(ui, theme, &report));
 
     let selected = state.diff.selected.clone();
     let mut clicked = None;
@@ -115,39 +122,74 @@ fn short_id(id: &str) -> String {
     id.chars().take(18).collect()
 }
 
-fn summary(ui: &mut egui::Ui, report: &DiffReport) {
+fn summary(ui: &mut egui::Ui, theme: crate::state::ThemeChoice, report: &DiffReport) {
     let summary = &report.summary;
+    crate::theme::section(ui, theme, "Comparison");
     if summary.scope_compatible {
-        ui.label("Scope: both captures recorded the same roots.");
+        crate::theme::muted(ui, theme, "Scope: both captures recorded the same roots.");
     } else {
-        ui.label(
+        crate::theme::chip(ui, theme, "warning", crate::theme::Tone::Warn);
+        crate::theme::muted(
+            ui,
+            theme,
             "Scope mismatch: the two captures recorded different roots. Paths outside the \
              shared scope are reported as unknown, never as appeared or deleted.",
         );
     }
-    ui.label(format!(
-        "Roots before: {} · after: {}",
-        joined(&summary.before_roots),
-        joined(&summary.after_roots)
-    ));
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "Roots before: {} · after: {}",
+            joined(&summary.before_roots),
+            joined(&summary.after_roots)
+        ),
+    );
     for warning in &summary.warnings {
         let (warning, _) = escape_for_display(warning, 1_024);
-        ui.label(format!("Warning: {warning}"));
+        crate::theme::chip(ui, theme, "warning", crate::theme::Tone::Warn);
+        crate::theme::muted(ui, theme, format!("Warning: {warning}"));
     }
-    ui.label(format!(
-        "unchanged {} · metadata changed {} · content changed {} · content changed with equal \
-         metadata {} · appeared {} · not present in captured scope {} · move candidates {} · \
-         unknown {} · same-content relations {}",
-        summary.unchanged,
-        summary.metadata_changed,
-        summary.content_changed,
-        summary.content_changed_equal_metadata,
-        summary.appeared,
-        summary.not_present_in_captured_scope,
-        summary.move_candidates,
-        summary.unknown,
-        summary.same_content_relations
-    ));
+    ui.horizontal_wrapped(|ui| {
+        crate::theme::stat(ui, theme, "unchanged", summary.unchanged.to_string());
+        crate::theme::stat(
+            ui,
+            theme,
+            "metadata changed",
+            summary.metadata_changed.to_string(),
+        );
+        crate::theme::stat(
+            ui,
+            theme,
+            "content changed",
+            summary.content_changed.to_string(),
+        );
+        crate::theme::stat(
+            ui,
+            theme,
+            "equal metadata",
+            summary.content_changed_equal_metadata.to_string(),
+        );
+        crate::theme::stat(ui, theme, "appeared", summary.appeared.to_string());
+    });
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "unchanged {} · metadata changed {} · content changed {} · content changed with equal \
+             metadata {} · appeared {} · not present in captured scope {} · move candidates {} · \
+             unknown {} · same-content relations {}",
+            summary.unchanged,
+            summary.metadata_changed,
+            summary.content_changed,
+            summary.content_changed_equal_metadata,
+            summary.appeared,
+            summary.not_present_in_captured_scope,
+            summary.move_candidates,
+            summary.unknown,
+            summary.same_content_relations
+        ),
+    );
 }
 
 fn joined(values: &[String]) -> String {
@@ -163,51 +205,68 @@ fn joined(values: &[String]) -> String {
 }
 
 fn row_detail(state: &mut AppState, ui: &mut egui::Ui) {
-    ui.heading("Row detail");
+    let theme = state.theme;
+    crate::theme::title(ui, theme, "Row detail");
     let Some(report) = state.diff.report.clone() else {
-        ui.label("Compare two captures to inspect a row.");
+        crate::theme::muted(ui, theme, "Compare two captures to inspect a row.");
         return;
     };
     let Some(path) = state.diff.selected.clone() else {
-        ui.label("Select a row to see its recorded values.");
+        crate::theme::muted(ui, theme, "Select a row to see its recorded values.");
         return;
     };
     let Some(row) = report.rows.iter().find(|row| row.path == path) else {
-        ui.label("The selected row is not in the current page.");
+        crate::theme::muted(ui, theme, "The selected row is not in the current page.");
         return;
     };
-    body(ui, row, &state.timeline.display_timezone);
+    body(ui, theme, row, &state.timeline.display_timezone);
 }
 
-fn body(ui: &mut egui::Ui, row: &DiffRow, zone: &str) {
+fn body(ui: &mut egui::Ui, theme: crate::state::ThemeChoice, row: &DiffRow, zone: &str) {
     let (path, _) = escape_for_display(&row.path, 4_096);
-    ui.label(format!("Class: {}", class_label(row.class)));
-    ui.label(format!("Path: {path}"));
+    crate::theme::section(ui, theme, "Row");
+    crate::theme::chip(
+        ui,
+        theme,
+        class_label(row.class),
+        crate::theme::Tone::Neutral,
+    );
+    crate::theme::muted(ui, theme, format!("Class: {}", class_label(row.class)));
+    crate::theme::muted(ui, theme, format!("Path: {path}"));
     let (reason, _) = escape_for_display(&row.reason, 2_048);
-    ui.label(format!("Reason: {reason}"));
-    entry(ui, "Earlier", row.before.as_ref(), zone);
-    entry(ui, "Later", row.after.as_ref(), zone);
+    crate::theme::muted(ui, theme, format!("Reason: {reason}"));
+    entry(ui, theme, "Earlier", row.before.as_ref(), zone);
+    entry(ui, theme, "Later", row.after.as_ref(), zone);
 }
 
 fn entry(
     ui: &mut egui::Ui,
+    theme: crate::state::ThemeChoice,
     label: &str,
     entry: Option<&ghosttrace_core::analysis::diff::SnapshotEntry>,
     zone: &str,
 ) {
     let Some(entry) = entry else {
-        ui.label(format!("{label}: not present in the recorded scope"));
+        crate::theme::muted(
+            ui,
+            theme,
+            format!("{label}: not present in the recorded scope"),
+        );
         return;
     };
-    ui.label(format!(
-        "{label}: {} bytes · sha256 {} · mtime {}",
-        entry.byte_length,
-        &entry.sha256[..entry.sha256.len().min(16)],
-        entry
-            .source_mtime_seconds
-            .map(|seconds| crate::timeline::format_instant(seconds, zone))
-            .unwrap_or_else(|| "not recorded".into())
-    ));
+    crate::theme::muted(
+        ui,
+        theme,
+        format!(
+            "{label}: {} bytes · sha256 {} · mtime {}",
+            entry.byte_length,
+            &entry.sha256[..entry.sha256.len().min(16)],
+            entry
+                .source_mtime_seconds
+                .map(|seconds| crate::timeline::format_instant(seconds, zone))
+                .unwrap_or_else(|| "not recorded".into())
+        ),
+    );
 }
 
 /// Plain-language class names. `unknown` is its own class, never folded into
