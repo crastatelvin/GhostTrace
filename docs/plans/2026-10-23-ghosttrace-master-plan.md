@@ -1447,8 +1447,14 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
 - CLI annotation closed on `main` after the RC tag: `ghosttrace annotate
   record/history` appends notes, tags, and dispositions and reads their
   append-only history (see `docs/cli.md`). Saved views remain desktop-only.
-- Open: the draft prerelease is not publicly published (owner authorization),
-  Windows/macOS builds and terminal smoke checks, and live
+- Published (2026-10-30, owner authorization recorded in this session): the
+  candidate at `v1.0.0-rc.1` is no longer a draft and remains a **prerelease**
+  at https://github.com/crastatelvin/GhostTrace/releases/tag/v1.0.0-rc.1 with
+  its three assets unchanged. The tag predates `b749969` (10-GiB corpus and
+  `wgpu` verification records), `a40f146` (desktop appearance), and `a01db11`
+  (`annotate`); the candidate notes name each of those instead of shipping them
+  in the packaged binaries.
+- Open: Windows/macOS builds and terminal smoke checks, and live
   NVDA/VoiceOver/Orca sessions. `1.0.0` is not tagged; the candidate notes
   record these instead of claiming support.
 
