@@ -12,7 +12,7 @@
 
 **Plan date:** 23 October 2026, Asia/Kolkata. Research was performed against public project repositories, official documentation, and crates.io on this date. Dependency versions below are researched starting candidates, not a claim that the complete dependency set has been built together.
 
-**Project root:** `/home/maya/Projects/GhostTrace`.
+**Project root:** the repository root (the directory containing `Cargo.toml`).
 
 ## Global constraints
 
@@ -1704,7 +1704,7 @@ The following commands are future instructions. They were not executed while wri
 - [ ] Initialize from the real project root and commit the reviewed planning/setup documents.
 
 ```bash
-cd /home/maya/Projects/GhostTrace
+cd <repository-root>
 git init -b main
 git add docs/plans/2026-10-23-ghosttrace-master-plan.md
 git diff --cached --check
