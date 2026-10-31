@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="250" viewBox="0 0 680 250" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6FA8FF"/>
+    </marker>
+  </defs>
+
+  <rect width="680" height="250" rx="14" fill="#0E141B"/>
+  <text x="36" y="44" fill="#E7EDF4" font-size="19" font-weight="600">Verification keeps three questions separate</text>
+  <text x="36" y="66" fill="#97A3B2" font-size="12.5">One "verified" word that hides which question failed is not verification. GhostTrace reports each answer, and the gaps between them.</text>
+
+  <!-- evidence bytes -->
+  <g>
+    <rect x="36" y="92" width="180" height="120" rx="10" fill="#151B26" stroke="#263039"/>
+    <rect x="36" y="92" width="4" height="120" rx="2" fill="#4CC38A"/>
+    <text x="56" y="118" fill="#E7EDF4" font-size="13.5" font-weight="600">1 · The bytes</text>
+    <text x="56" y="142" fill="#97A3B2" font-size="11.5">Do stored objects match</text>
+    <text x="56" y="160" fill="#97A3B2" font-size="11.5">the recorded SHA-256?</text>
+    <text x="56" y="188" fill="#4CC38A" font-size="11.5">mismatch → integrity_mismatch</text>
+    <text x="56" y="204" fill="#97A3B2" font-size="11">exit 4 · the case fails</text>
+  </g>
+  <path d="M 216 152 L 240 152" stroke="#6FA8FF" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+  <!-- signature -->
+  <g>
+    <rect x="246" y="92" width="180" height="120" rx="10" fill="#151B26" stroke="#263039"/>
+    <rect x="246" y="92" width="4" height="120" rx="2" fill="#6FA8FF"/>
+    <text x="266" y="118" fill="#E7EDF4" font-size="13.5" font-weight="600">2 · The signature</text>
+    <text x="266" y="142" fill="#97A3B2" font-size="11.5">Do these exact bytes carry</text>
+    <text x="266" y="160" fill="#97A3B2" font-size="11.5">a valid Ed25519 signature?</text>
+    <text x="266" y="188" fill="#6FA8FF" font-size="11.5">valid · invalid · not signed</text>
+    <text x="266" y="204" fill="#97A3B2" font-size="11">key identity is the next step</text>
+  </g>
+  <path d="M 426 152 L 450 152" stroke="#6FA8FF" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+  <!-- trust -->
+  <g>
+    <rect x="456" y="92" width="188" height="120" rx="10" fill="#151B26" stroke="#263039"/>
+    <rect x="456" y="92" width="4" height="120" rx="2" fill="#E0B341"/>
+    <text x="476" y="118" fill="#E7EDF4" font-size="13.5" font-weight="600">3 · Key trust</text>
+    <text x="476" y="142" fill="#97A3B2" font-size="11.5">Is the signing key in the</text>
+    <text x="476" y="160" fill="#97A3B2" font-size="11.5">analyst's explicit trust list?</text>
+    <text x="476" y="188" fill="#E0B341" font-size="11.5">trusted · untrusted</text>
+    <text x="476" y="204" fill="#97A3B2" font-size="11">valid-but-untrusted is a report, not a pass</text>
+  </g>
+
+  <text x="36" y="240" fill="#97A3B2" font-size="11.5">Coverage gaps ride along: a manifest with a gap verifies only for its captured scope, and the report says so.</text>
+</svg>
