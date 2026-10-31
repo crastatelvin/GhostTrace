@@ -1454,6 +1454,16 @@ For each completed task, append: `Issue: real URL; PR: real URL; commit: actual 
   `wgpu` verification records), `a40f146` (desktop appearance), and `a01db11`
   (`annotate`); the candidate notes name each of those instead of shipping them
   in the packaged binaries.
+- Published (2026-10-31, owner authorization recorded in this session): the
+  re-cut candidate `v1.0.0-rc.2` (tag `bc661b2`, workspace `1.0.0-rc.2`) is a
+  **prerelease** at
+  https://github.com/crastatelvin/GhostTrace/releases/tag/v1.0.0-rc.2. It
+  packages the current tree — redesigned desktop, `annotate`, and the README —
+  with no schema change (still 5). Downloaded assets verify against
+  `SHA256SUMS`, both extracted binaries report `1.0.0-rc.2`,
+  `build-info.json` names the tagged commit, and the packaged sample smoke run
+  reproduces 11 events, 2 findings, 3 `not_evaluated` rules, and a clean
+  `verify`. `v1.0.0-rc.1` remains published and unchanged.
 - Open: Windows/macOS builds and terminal smoke checks, and live
   NVDA/VoiceOver/Orca sessions. `1.0.0` is not tagged; the candidate notes
   record these instead of claiming support.
