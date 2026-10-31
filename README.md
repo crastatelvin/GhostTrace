@@ -27,14 +27,14 @@ and prove what you found — with the uncertainty left in.**
 
 ## Status
 
-**`1.0.0-rc.1` is published as a prerelease; Linux x86_64 is verified.** The
+**`1.0.0-rc.2` is published as a prerelease; Linux x86_64 is verified.** The
 release pipeline ships a checksummed CLI/desktop archive with generated shell
 completions, a CycloneDX SBOM, tracked samples, offline guides, a source
 archive, and a tag-triggered workflow with pinned actions and build-provenance
 attestation. `1.0.0` is **not** tagged: Windows/macOS native builds, live
 screen-reader sessions, and terminal smoke checks remain open gates. The
 candidate's tested results and known issues are in
-[`docs/releases/1.0.0-rc.1.md`](docs/releases/1.0.0-rc.1.md); the platform
+[`docs/releases/1.0.0-rc.2.md`](docs/releases/1.0.0-rc.2.md); the platform
 matrix is in [`docs/releases.md`](docs/releases.md).
 
 | Release | Deliverable |
@@ -169,7 +169,7 @@ dropped: [`docs/performance.md`](docs/performance.md).
 | [Limitations](docs/limitations.md) | unsupported formats, custody, platform, accessibility |
 | [Troubleshooting](docs/troubleshooting.md) | permissions, WAL, schema, time, signatures, backup |
 | [Releases](docs/releases.md) | platform matrix, verification of published artifacts |
-| [Candidate notes](docs/releases/1.0.0-rc.1.md) | the 1.0.0-rc.1 tested results and known issues |
+| [Candidate notes](docs/releases/1.0.0-rc.2.md) | the 1.0.0-rc.2 tested results and known issues |
 | [Samples](samples/README.md) | two tracked synthetic investigations |
 
 ## Platform support

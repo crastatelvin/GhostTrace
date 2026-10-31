@@ -41,17 +41,17 @@ A prerelease archive is built with:
 
 ```bash
 cargo build --release -p ghosttrace-cli -p ghosttrace-desktop
-cargo run -p xtask -- package --output dist --version 1.0.0-rc.1
+cargo run -p xtask -- package --output dist --version 1.0.0-rc.2
 ```
 
 The result is `dist/ghosttrace-<version>-<target>.tar.gz` and a sibling
 `.sha256`. Verify, unpack, and run:
 
 ```bash
-sha256sum -c ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz.sha256
-tar -xzf ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu.tar.gz
-./ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu/bin/ghosttrace --help
-./ghosttrace-1.0.0-rc.1-x86_64-unknown-linux-gnu/bin/ghosttrace-desktop --version
+sha256sum -c ghosttrace-1.0.0-rc.2-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf ghosttrace-1.0.0-rc.2-x86_64-unknown-linux-gnu.tar.gz
+./ghosttrace-1.0.0-rc.2-x86_64-unknown-linux-gnu/bin/ghosttrace --help
+./ghosttrace-1.0.0-rc.2-x86_64-unknown-linux-gnu/bin/ghosttrace-desktop --version
 ```
 
 The archive contains both binaries, the licences, the user guides, the tracked

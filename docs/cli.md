@@ -422,7 +422,7 @@ invalid usage.
 
 ```bash
 cargo build -p ghosttrace-cli --release
-cargo run -p xtask -- package --output dist --version 1.0.0-rc.1
+cargo run -p xtask -- package --output dist --version 1.0.0-rc.2
 ```
 
 The archive includes the binary, licences, docs, `help.txt`, sample data, and a

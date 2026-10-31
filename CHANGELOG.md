@@ -10,6 +10,15 @@ file records implemented capability only.
 
 ## [Unreleased]
 
+### Changed
+
+- P11 (2026-10-30): re-cut the release candidate as `1.0.0-rc.2` so the
+  packaged binaries include the redesigned desktop workbench (`a40f146`)
+  and the `annotate` command (`a01db11`). No schema change (still 5), no
+  record, digest, output-contract, or exit-code change. Candidate notes:
+  `docs/releases/1.0.0-rc.2.md`; `1.0.0` remains untagged until the open
+  Windows/macOS and live screen-reader gates pass.
+
 ### Added
 
 - P11 (2026-10-29): release-candidate distribution machinery — workspace
