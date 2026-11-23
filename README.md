@@ -2,7 +2,6 @@
 
 <img src="docs/images/ghostrace-logo.png" alt="GhostTrace logo" width="180"/>
 
-# GhostTrace
 
 **A local-first Rust forensic workbench: capture artifacts, rebuild the timeline,
 and prove what you found — with the uncertainty left in.**
